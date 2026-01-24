@@ -131,7 +131,8 @@ export default function MercadoLivrePage() {
         if (config?.ml_access_token) {
           setMlConnected(true);
           setMlNickname(config.ml_nickname || '');
-          await loadAllData();
+          // Passar userId diretamente para evitar problema de estado
+          await loadAllDataWithUserId(user.id);
         }
       }
     } catch (error) {
@@ -141,13 +142,13 @@ export default function MercadoLivrePage() {
     }
   };
 
-  const loadAllData = async () => {
+  const loadAllDataWithUserId = async (uid: string) => {
     setIsRefreshing(true);
     try {
       await Promise.all([
-        loadAnuncios(),
-        loadVendas(),
-        loadPerguntas(),
+        loadAnunciosWithUserId(uid),
+        loadVendasWithUserId(uid),
+        loadPerguntasWithUserId(uid),
       ]);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
@@ -156,12 +157,17 @@ export default function MercadoLivrePage() {
     }
   };
 
-  const loadAnuncios = async () => {
+  const loadAllData = async () => {
+    if (!userId) return;
+    await loadAllDataWithUserId(userId);
+  };
+
+  const loadAnunciosWithUserId = async (uid: string) => {
     try {
       const response = await fetch('/api/mercadolivre/items', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId }),
+        body: JSON.stringify({ user_id: uid }),
       });
 
       if (response.ok) {
@@ -185,12 +191,12 @@ export default function MercadoLivrePage() {
     }
   };
 
-  const loadVendas = async () => {
+  const loadVendasWithUserId = async (uid: string) => {
     try {
       const response = await fetch('/api/mercadolivre/orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId }),
+        body: JSON.stringify({ user_id: uid }),
       });
 
       if (response.ok) {
@@ -212,12 +218,12 @@ export default function MercadoLivrePage() {
     }
   };
 
-  const loadPerguntas = async () => {
+  const loadPerguntasWithUserId = async (uid: string) => {
     try {
       const response = await fetch('/api/mercadolivre/questions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId }),
+        body: JSON.stringify({ user_id: uid }),
       });
 
       if (response.ok) {
@@ -236,6 +242,10 @@ export default function MercadoLivrePage() {
       console.error('Erro ao carregar perguntas:', error);
     }
   };
+
+  const loadAnuncios = () => loadAnunciosWithUserId(userId);
+  const loadVendas = () => loadVendasWithUserId(userId);
+  const loadPerguntas = () => loadPerguntasWithUserId(userId);
 
   const sincronizarEstoque = async () => {
     setIsRefreshing(true);
