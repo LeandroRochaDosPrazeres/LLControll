@@ -7,12 +7,14 @@ import {
   LayoutDashboard, 
   Package, 
   ShoppingCart, 
-  Settings 
+  Settings,
+  Store
 } from 'lucide-react';
 
 const tabs = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/estoque', icon: Package, label: 'Estoque' },
+  { href: '/mercadolivre', icon: Store, label: 'ML' },
   { href: '/vendas', icon: ShoppingCart, label: 'Vendas' },
   { href: '/ajustes', icon: Settings, label: 'Ajustes' },
 ];
