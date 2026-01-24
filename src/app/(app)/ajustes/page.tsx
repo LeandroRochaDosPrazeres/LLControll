@@ -239,7 +239,7 @@ function AjustesContent() {
   };
 
   const handleConnectML = () => {
-    const authUrl = getAuthUrl();
+    const authUrl = getAuthUrl(userId);
     window.location.href = authUrl;
   };
 

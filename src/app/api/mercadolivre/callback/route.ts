@@ -12,6 +12,7 @@ export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const code = searchParams.get('code');
   const error = searchParams.get('error');
+  const state = searchParams.get('state'); // userId passado pelo state
 
   if (error) {
     return NextResponse.redirect(
@@ -55,17 +56,31 @@ export async function GET(request: NextRequest) {
     const mlUser = await getMLUser(tokenData.access_token);
 
     // Salvar no Supabase
-    if (SUPABASE_SERVICE_KEY) {
-      const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
-      // Buscar usuário autenticado
+    // Usar o userId do state ou buscar o primeiro usuário
+    let userId = state ? decodeURIComponent(state) : null;
+    
+    if (!userId) {
+      // Fallback: buscar usuário existente
       const { data: configData } = await supabase
         .from('configuracoes')
         .select('user_id')
         .limit(1)
         .single();
+      userId = configData?.user_id;
+    }
 
-      if (configData?.user_id) {
+    if (userId) {
+      // Verificar se existe configuração, senão criar
+      const { data: existingConfig } = await supabase
+        .from('configuracoes')
+        .select('user_id')
+        .eq('user_id', userId)
+        .single();
+
+      if (existingConfig) {
+        // Atualizar
         await supabase
           .from('configuracoes')
           .update({
@@ -75,7 +90,19 @@ export async function GET(request: NextRequest) {
             ml_token_expires: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
             ml_nickname: mlUser.nickname,
           })
-          .eq('user_id', configData.user_id);
+          .eq('user_id', userId);
+      } else {
+        // Inserir
+        await supabase
+          .from('configuracoes')
+          .insert({
+            user_id: userId,
+            ml_user_id: mlUser.id.toString(),
+            ml_access_token: tokenData.access_token,
+            ml_refresh_token: tokenData.refresh_token,
+            ml_token_expires: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
+            ml_nickname: mlUser.nickname,
+          });
       }
     }
 
