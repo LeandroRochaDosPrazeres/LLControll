@@ -82,13 +82,14 @@ export default function AjustesPage() {
           .eq('user_id', user.id)
           .single();
 
-        if (data) {
-          setConfig(data);
-          setMetaDiaria(data.meta_diaria.toString());
-          setMetaMensal(data.meta_mensal.toString());
-          setTaxaClassico(data.taxa_classico.toString());
-          setTaxaPremium(data.taxa_premium.toString());
-          setNotificacoesAtivas(data.notificacoes_ativas);
+        if (data && !error) {
+          const configData = data as Configuracoes;
+          setConfig(configData);
+          setMetaDiaria(configData.meta_diaria?.toString() || '100');
+          setMetaMensal(configData.meta_mensal?.toString() || '3000');
+          setTaxaClassico(configData.taxa_classico?.toString() || '11');
+          setTaxaPremium(configData.taxa_premium?.toString() || '16');
+          setNotificacoesAtivas(configData.notificacoes_ativas ?? true);
         }
       }
     } catch (error) {
@@ -117,7 +118,7 @@ export default function AjustesPage() {
           user_id: user.id,
           meta_diaria: metaDiariaNum,
           meta_mensal: metaMensalNum,
-        });
+        } as any);
 
       if (error) throw error;
 
@@ -146,7 +147,7 @@ export default function AjustesPage() {
           user_id: user.id,
           taxa_classico: parseFloat(taxaClassico) || 11,
           taxa_premium: parseFloat(taxaPremium) || 16,
-        });
+        } as any);
 
       if (error) throw error;
 
@@ -173,7 +174,7 @@ export default function AjustesPage() {
           .upsert({
             user_id: user.id,
             notificacoes_ativas: enabled,
-          });
+          } as any);
       }
     } catch (error) {
       console.error('Erro ao atualizar notificações:', error);

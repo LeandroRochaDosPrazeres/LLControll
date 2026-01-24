@@ -136,24 +136,27 @@ export interface CalculoLucro {
 }
 
 // Database types para Supabase
-export interface Database {
+export type Database = {
   public: {
     Tables: {
       produtos: {
         Row: Produto;
-        Insert: ProdutoInsert & { user_id?: string };
-        Update: ProdutoUpdate;
+        Insert: Partial<Produto>;
+        Update: Partial<Produto>;
       };
       vendas: {
         Row: Venda;
-        Insert: VendaInsert & { user_id?: string };
-        Update: Partial<VendaInsert>;
+        Insert: Partial<Venda>;
+        Update: Partial<Venda>;
       };
       configuracoes: {
         Row: Configuracoes;
-        Insert: Partial<Configuracoes> & { user_id: string };
-        Update: ConfiguracoesUpdate;
+        Insert: Partial<Configuracoes>;
+        Update: Partial<Configuracoes>;
       };
     };
+    Views: {};
+    Functions: {};
+    Enums: {};
   };
-}
+};

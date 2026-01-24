@@ -85,13 +85,15 @@ export default function DashboardPage() {
           dataInicio = new Date(agora.setHours(0, 0, 0, 0));
       }
 
-      const { data: vendas, error } = await supabase
+      const { data: vendasData, error } = await supabase
         .from('vendas')
         .select('*')
         .gte('data_venda', dataInicio.toISOString())
         .order('data_venda', { ascending: false });
 
       if (error) throw error;
+
+      const vendas = vendasData as Venda[] | null;
 
       if (vendas && vendas.length > 0) {
         const faturamento = vendas.reduce((acc, v) => acc + Number(v.valor_final), 0);
