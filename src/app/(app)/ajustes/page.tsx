@@ -1,17 +1,24 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { motion } from 'framer-motion';
+import { useSearchParams } from 'next/navigation';
 import { 
   Settings, 
   Bell, 
   Target, 
   Percent,
   Link2,
+  Link2Off,
   LogOut,
   ChevronRight,
   User,
-  Info
+  Info,
+  Package,
+  RefreshCw,
+  Check,
+  AlertCircle,
+  ExternalLink
 } from 'lucide-react';
 import * as SwitchPrimitive from '@radix-ui/react-switch';
 import { Card, Button, Input, Modal, useToast } from '@/components/ui';
@@ -19,6 +26,7 @@ import { formatarMoeda } from '@/lib/utils/calculos';
 import { getSupabaseClient } from '@/lib/supabase/client';
 import { Configuracoes } from '@/types/database';
 import { cn, hapticFeedback } from '@/lib/utils/helpers';
+import { getAuthUrl } from '@/lib/mercadolivre/client';
 
 interface SettingItemProps {
   icon: React.ReactNode;
@@ -53,13 +61,21 @@ function SettingItem({ icon, title, description, onClick, rightElement }: Settin
   );
 }
 
-export default function AjustesPage() {
+function AjustesContent() {
+  const searchParams = useSearchParams();
   const [config, setConfig] = useState<Configuracoes | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [showMetasModal, setShowMetasModal] = useState(false);
   const [showTaxasModal, setShowTaxasModal] = useState(false);
   const [showContaModal, setShowContaModal] = useState(false);
+  const [showMLModal, setShowMLModal] = useState(false);
+  const [mlConnected, setMlConnected] = useState(false);
+  const [mlNickname, setMlNickname] = useState('');
+  const [mlItems, setMlItems] = useState<any[]>([]);
+  const [loadingItems, setLoadingItems] = useState(false);
+  const [importingItem, setImportingItem] = useState<string | null>(null);
   const [userEmail, setUserEmail] = useState('');
+  const [userId, setUserId] = useState('');
   const [metaDiaria, setMetaDiaria] = useState('');
   const [metaMensal, setMetaMensal] = useState('');
   const [taxaClassico, setTaxaClassico] = useState('11');
@@ -70,7 +86,31 @@ export default function AjustesPage() {
 
   useEffect(() => {
     carregarConfiguracoes();
-  }, []);
+    
+    // Verificar retorno do OAuth
+    const mlSuccess = searchParams.get('ml_success');
+    const mlError = searchParams.get('ml_error');
+    const nickname = searchParams.get('nickname');
+    
+    if (mlSuccess === 'true') {
+      addToast({ 
+        type: 'success', 
+        title: 'Mercado Livre conectado!',
+        description: nickname ? `Bem-vindo, ${nickname}` : undefined
+      });
+      setMlConnected(true);
+      if (nickname) setMlNickname(nickname);
+      // Limpar URL
+      window.history.replaceState({}, '', '/ajustes');
+    } else if (mlError) {
+      addToast({ 
+        type: 'error', 
+        title: 'Erro ao conectar ML',
+        description: mlError
+      });
+      window.history.replaceState({}, '', '/ajustes');
+    }
+  }, [searchParams]);
 
   const carregarConfiguracoes = async () => {
     try {
@@ -79,6 +119,7 @@ export default function AjustesPage() {
 
       if (user) {
         setUserEmail(user.email || '');
+        setUserId(user.id);
         
         const { data, error } = await supabase
           .from('configuracoes')
@@ -94,6 +135,12 @@ export default function AjustesPage() {
           setTaxaClassico(configData.taxa_classico?.toString() || '11');
           setTaxaPremium(configData.taxa_premium?.toString() || '16');
           setNotificacoesAtivas(configData.notificacoes_ativas ?? true);
+          
+          // Verificar conexão ML
+          if ((configData as any).ml_user_id) {
+            setMlConnected(true);
+            setMlNickname((configData as any).ml_nickname || '');
+          }
         }
       }
     } catch (error) {
@@ -191,6 +238,121 @@ export default function AjustesPage() {
     window.location.href = '/login';
   };
 
+  const handleConnectML = () => {
+    const authUrl = getAuthUrl();
+    window.location.href = authUrl;
+  };
+
+  const handleDisconnectML = async () => {
+    try {
+      const supabase = getSupabaseClient();
+      await supabase
+        .from('configuracoes')
+        .update({
+          ml_user_id: null,
+          ml_access_token: null,
+          ml_refresh_token: null,
+          ml_token_expires: null,
+          ml_nickname: null,
+        } as any)
+        .eq('user_id', userId);
+
+      setMlConnected(false);
+      setMlNickname('');
+      setMlItems([]);
+      addToast({ type: 'success', title: 'Mercado Livre desconectado' });
+    } catch (error) {
+      console.error('Erro ao desconectar ML:', error);
+      addToast({ type: 'error', title: 'Erro ao desconectar' });
+    }
+  };
+
+  const loadMLItems = async () => {
+    if (!userId) return;
+    
+    setLoadingItems(true);
+    try {
+      const response = await fetch('/api/mercadolivre/items', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Erro ao buscar anúncios');
+      }
+
+      const data = await response.json();
+      setMlItems(data.items || []);
+    } catch (error: any) {
+      console.error('Erro ao buscar anúncios:', error);
+      addToast({ 
+        type: 'error', 
+        title: 'Erro ao buscar anúncios',
+        description: error.message 
+      });
+    } finally {
+      setLoadingItems(false);
+    }
+  };
+
+  const importarProdutoML = async (item: any) => {
+    setImportingItem(item.id);
+    try {
+      const supabase = getSupabaseClient();
+      
+      // Verificar se já existe produto com este ml_id
+      const { data: existing } = await supabase
+        .from('produtos')
+        .select('id')
+        .eq('ml_id', item.id)
+        .single();
+
+      if (existing) {
+        addToast({ 
+          type: 'warning', 
+          title: 'Produto já importado',
+          description: 'Este anúncio já está vinculado a um produto'
+        });
+        return;
+      }
+
+      // Criar produto
+      const { error } = await supabase
+        .from('produtos')
+        .insert({
+          user_id: userId,
+          nome: item.title,
+          foto_url: item.thumbnail?.replace('http://', 'https://') || null,
+          quantidade: item.available_quantity,
+          valor_pago: 0, // Usuário precisará preencher o custo
+          valor_venda: item.price,
+          ml_id: item.id,
+          taxa_tipo: 'classico',
+          ativo: true,
+        } as any);
+
+      if (error) throw error;
+
+      addToast({ 
+        type: 'success', 
+        title: 'Produto importado!',
+        description: 'Não esqueça de preencher o custo no Estoque'
+      });
+
+      // Marcar como importado na lista
+      setMlItems(prev => prev.map(i => 
+        i.id === item.id ? { ...i, imported: true } : i
+      ));
+    } catch (error: any) {
+      console.error('Erro ao importar:', error);
+      addToast({ type: 'error', title: 'Erro ao importar produto' });
+    } finally {
+      setImportingItem(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50 pt-safe">
       {/* Header */}
@@ -224,9 +386,9 @@ export default function AjustesPage() {
 
         {/* Mercado Livre */}
         <Card className="overflow-hidden p-0">
-          <div className="px-4 py-3 bg-gray-50 border-b border-gray-100">
-            <h3 className="text-sm font-semibold text-gray-600 uppercase tracking-wide">
-              Mercado Livre
+          <div className="px-4 py-3 bg-yellow-50 border-b border-yellow-100">
+            <h3 className="text-sm font-semibold text-yellow-700 uppercase tracking-wide flex items-center gap-2">
+              <span className="text-lg">🛒</span> Mercado Livre
             </h3>
           </div>
           <SettingItem
@@ -236,22 +398,45 @@ export default function AjustesPage() {
             onClick={() => setShowTaxasModal(true)}
           />
           <div className="border-t border-gray-100" />
-          <SettingItem
-            icon={<Link2 className="w-5 h-5 text-green-600" />}
-            title="Conectar Conta"
-            description={
-              config?.ml_user_id 
-                ? 'Conta conectada' 
-                : 'Sincronizar vendas automáticas'
-            }
-            onClick={() => {
-              addToast({
-                type: 'info',
-                title: 'Em breve',
-                description: 'Integração com ML em desenvolvimento',
-              });
-            }}
-          />
+          
+          {mlConnected ? (
+            <>
+              <div className="p-4 bg-green-50 border-b border-green-100">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                    <Check className="w-5 h-5 text-green-600" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-green-800">Conta Conectada</p>
+                    <p className="text-xs text-green-600">{mlNickname || 'Sincronização ativa'}</p>
+                  </div>
+                </div>
+              </div>
+              <SettingItem
+                icon={<Package className="w-5 h-5 text-blue-600" />}
+                title="Importar Anúncios"
+                description="Trazer produtos do Mercado Livre"
+                onClick={() => {
+                  setShowMLModal(true);
+                  loadMLItems();
+                }}
+              />
+              <div className="border-t border-gray-100" />
+              <SettingItem
+                icon={<Link2Off className="w-5 h-5 text-red-500" />}
+                title="Desconectar Conta"
+                description="Remover integração com ML"
+                onClick={handleDisconnectML}
+              />
+            </>
+          ) : (
+            <SettingItem
+              icon={<Link2 className="w-5 h-5 text-green-600" />}
+              title="Conectar Conta"
+              description="Sincronizar vendas automaticamente"
+              onClick={handleConnectML}
+            />
+          )}
         </Card>
 
         {/* Notificações */}
@@ -439,6 +624,111 @@ export default function AjustesPage() {
           </Button>
         </div>
       </Modal>
+
+      {/* Modal Importar ML */}
+      <Modal
+        open={showMLModal}
+        onOpenChange={setShowMLModal}
+        title="Importar do Mercado Livre"
+        description="Selecione os anúncios para importar ao estoque"
+      >
+        <div className="space-y-4 max-h-96 overflow-y-auto">
+          {loadingItems ? (
+            <div className="flex items-center justify-center py-8">
+              <RefreshCw className="w-6 h-6 text-gray-400 animate-spin" />
+            </div>
+          ) : mlItems.length === 0 ? (
+            <div className="text-center py-8">
+              <Package className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+              <p className="text-gray-500">Nenhum anúncio encontrado</p>
+              <button
+                onClick={loadMLItems}
+                className="mt-3 text-primary-600 text-sm font-medium flex items-center gap-1 mx-auto"
+              >
+                <RefreshCw className="w-4 h-4" /> Recarregar
+              </button>
+            </div>
+          ) : (
+            mlItems.map((item) => (
+              <div 
+                key={item.id}
+                className={cn(
+                  "flex items-center gap-3 p-3 rounded-xl border transition-colors",
+                  item.imported 
+                    ? "bg-green-50 border-green-200" 
+                    : "bg-gray-50 border-gray-200"
+                )}
+              >
+                {item.thumbnail && (
+                  <img 
+                    src={item.thumbnail.replace('http://', 'https://')} 
+                    alt={item.title}
+                    className="w-14 h-14 object-cover rounded-lg"
+                  />
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-gray-900 truncate">
+                    {item.title}
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    {formatarMoeda(item.price)} • Estoque: {item.available_quantity}
+                  </p>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {item.status === 'active' ? '🟢 Ativo' : '🔴 ' + item.status}
+                  </p>
+                </div>
+                {item.imported ? (
+                  <div className="flex items-center gap-1 text-green-600 text-xs font-medium">
+                    <Check className="w-4 h-4" /> Importado
+                  </div>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={() => importarProdutoML(item)}
+                    disabled={importingItem === item.id}
+                  >
+                    {importingItem === item.id ? (
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                    ) : (
+                      'Importar'
+                    )}
+                  </Button>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+        
+        <div className="flex gap-3 pt-4 border-t mt-4">
+          <Button
+            variant="secondary"
+            fullWidth
+            onClick={() => setShowMLModal(false)}
+          >
+            Fechar
+          </Button>
+          <Button
+            fullWidth
+            onClick={loadMLItems}
+            disabled={loadingItems}
+          >
+            <RefreshCw className={cn("w-4 h-4 mr-2", loadingItems && "animate-spin")} />
+            Atualizar Lista
+          </Button>
+        </div>
+      </Modal>
     </div>
+  );
+}
+
+export default function AjustesPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <RefreshCw className="w-8 h-8 text-gray-400 animate-spin" />
+      </div>
+    }>
+      <AjustesContent />
+    </Suspense>
   );
 }
