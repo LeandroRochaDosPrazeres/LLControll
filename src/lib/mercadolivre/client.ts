@@ -52,8 +52,9 @@ export interface MLOrder {
 
 // Gerar URL de autorização
 export function getAuthUrl(): string {
-  const clientId = process.env.NEXT_PUBLIC_ML_APP_ID;
-  const redirectUri = `${process.env.NEXT_PUBLIC_APP_URL}/api/mercadolivre/callback`;
+  const clientId = process.env.NEXT_PUBLIC_ML_APP_ID || '5368303012953288';
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://llcontroll.vercel.app';
+  const redirectUri = `${baseUrl}/api/mercadolivre/callback`;
   
   return `https://auth.mercadolivre.com.br/authorization?response_type=code&client_id=${clientId}&redirect_uri=${encodeURIComponent(redirectUri)}`;
 }
