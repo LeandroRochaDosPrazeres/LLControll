@@ -200,7 +200,10 @@ export default function EstoquePage() {
                     onEdit={() => handleEdit(produto)}
                     onSell={() => handleVendaRapida(produto)}
                   >
-                    <Card className="flex items-center gap-3">
+                    <Card 
+                      className="flex items-center gap-3 cursor-pointer active:bg-gray-50 transition-colors"
+                      onClick={() => handleEdit(produto)}
+                    >
                       {/* Product Image */}
                       <div className="w-16 h-16 rounded-xl bg-gray-100 overflow-hidden flex-shrink-0">
                         {produto.foto_url ? (

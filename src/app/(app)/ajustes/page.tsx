@@ -58,6 +58,8 @@ export default function AjustesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [showMetasModal, setShowMetasModal] = useState(false);
   const [showTaxasModal, setShowTaxasModal] = useState(false);
+  const [showContaModal, setShowContaModal] = useState(false);
+  const [userEmail, setUserEmail] = useState('');
   const [metaDiaria, setMetaDiaria] = useState('');
   const [metaMensal, setMetaMensal] = useState('');
   const [taxaClassico, setTaxaClassico] = useState('11');
@@ -76,6 +78,8 @@ export default function AjustesPage() {
       const { data: { user } } = await supabase.auth.getUser();
 
       if (user) {
+        setUserEmail(user.email || '');
+        
         const { data, error } = await supabase
           .from('configuracoes')
           .select('*')
@@ -291,13 +295,8 @@ export default function AjustesPage() {
           <SettingItem
             icon={<User className="w-5 h-5 text-gray-600" />}
             title="Minha Conta"
-            description="Gerenciar perfil"
-            onClick={() => {
-              addToast({
-                type: 'info',
-                title: 'Em desenvolvimento',
-              });
-            }}
+            description={userEmail || 'Gerenciar perfil'}
+            onClick={() => setShowContaModal(true)}
           />
           <div className="border-t border-gray-100" />
           <SettingItem
@@ -397,6 +396,47 @@ export default function AjustesPage() {
               Salvar
             </Button>
           </div>
+        </div>
+      </Modal>
+
+      {/* Conta Modal */}
+      <Modal
+        open={showContaModal}
+        onOpenChange={setShowContaModal}
+        title="Minha Conta"
+        description="Informações da sua conta"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-xl">
+            <div className="w-12 h-12 bg-primary-100 rounded-full flex items-center justify-center">
+              <User className="w-6 h-6 text-primary-600" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm text-gray-500">Email</p>
+              <p className="font-medium text-gray-900">{userEmail}</p>
+            </div>
+          </div>
+          
+          <div className="border-t pt-4">
+            <button
+              onClick={() => {
+                setShowContaModal(false);
+                handleLogout();
+              }}
+              className="w-full flex items-center justify-center gap-2 py-3 px-4 bg-danger-50 text-danger-600 rounded-xl font-medium active:bg-danger-100 transition-colors"
+            >
+              <LogOut className="w-5 h-5" />
+              Sair da Conta
+            </button>
+          </div>
+
+          <Button
+            variant="secondary"
+            fullWidth
+            onClick={() => setShowContaModal(false)}
+          >
+            Fechar
+          </Button>
         </div>
       </Modal>
     </div>
