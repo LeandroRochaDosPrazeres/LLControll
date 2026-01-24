@@ -71,14 +71,21 @@ export default function ProdutoForm({ produto, onSuccess, onCancel }: ProdutoFor
 
     try {
       const supabase = getSupabaseClient();
+      const { data: { user } } = await supabase.auth.getUser();
 
-      const produtoData: ProdutoInsert = {
+      if (!user) {
+        addToast({ type: 'error', title: 'Usuário não autenticado' });
+        return;
+      }
+
+      const produtoData = {
         nome: formData.nome.trim(),
         quantidade: parseInt(formData.quantidade) || 0,
         valor_pago: valorPago,
         valor_venda: valorVenda,
         taxa_tipo: formData.taxa_tipo,
-        foto_url: formData.foto_url || undefined,
+        foto_url: formData.foto_url || null,
+        user_id: user.id,
       };
 
       if (produto) {
@@ -96,7 +103,7 @@ export default function ProdutoForm({ produto, onSuccess, onCancel }: ProdutoFor
         // Insert
         const { error } = await supabase
           .from('produtos')
-          .insert(produtoData);
+          .insert(produtoData as any);
 
         if (error) throw error;
 

@@ -58,8 +58,14 @@ export default function VendaRapidaModal({
 
     try {
       const supabase = getSupabaseClient();
+      const { data: { user } } = await supabase.auth.getUser();
 
-      const vendaData: VendaInsert = {
+      if (!user) {
+        addToast({ type: 'error', title: 'Usuário não autenticado' });
+        return;
+      }
+
+      const vendaData = {
         produto_id: produto.id,
         produto_nome: produto.nome,
         qtd_vendida: quantidade,
@@ -71,9 +77,10 @@ export default function VendaRapidaModal({
         taxa_fixa: calculo.taxaFixa,
         lucro_liquido: calculo.lucroLiquido,
         origem: 'manual',
+        user_id: user.id,
       };
 
-      const { error } = await supabase.from('vendas').insert(vendaData);
+      const { error } = await supabase.from('vendas').insert(vendaData as any);
 
       if (error) throw error;
 
