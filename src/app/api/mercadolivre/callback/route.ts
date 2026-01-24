@@ -4,7 +4,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const ML_APP_ID = process.env.ML_APP_ID || '5368303012953288';
 const ML_SECRET_KEY = process.env.ML_SECRET_KEY || 'wdSjpo7w61ASY7OztyOO8PM8fFYbAtPb';
-const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://llcontroll.vercel.app';
+const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://ll-controll.vercel.app';
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vbhhjukhtrylghclvotv.supabase.co';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
