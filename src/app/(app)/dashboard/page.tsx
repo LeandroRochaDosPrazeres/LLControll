@@ -4,12 +4,20 @@ import { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { 
   TrendingUp, 
+  TrendingDown,
   DollarSign, 
   Package, 
   ShoppingCart,
   Target,
   Calendar,
-  ChevronDown
+  ChevronDown,
+  Wallet,
+  PiggyBank,
+  BarChart3,
+  Percent,
+  ArrowUpRight,
+  ArrowDownRight,
+  Box
 } from 'lucide-react';
 import { 
   BarChart, 
@@ -17,10 +25,13 @@ import {
   XAxis, 
   YAxis, 
   ResponsiveContainer,
-  Tooltip
+  Tooltip,
+  PieChart,
+  Pie,
+  Cell
 } from 'recharts';
 import { Card } from '@/components/ui';
-import { formatarMoeda } from '@/lib/utils/calculos';
+import { formatarMoeda, calcularLucroUnitario } from '@/lib/utils/calculos';
 import { getSupabaseClient } from '@/lib/supabase/client';
 
 interface DashboardResumo {
@@ -30,6 +41,16 @@ interface DashboardResumo {
   lucroLiquido: number;
   totalVendas: number;
   ticketMedio: number;
+  quantidadeVendida: number;
+}
+
+interface EstoqueInfo {
+  totalProdutos: number;
+  totalItens: number;
+  valorCusto: number;
+  valorVenda: number;
+  lucroEsperado: number;
+  margemMedia: number;
 }
 
 interface DadoGrafico {
@@ -39,7 +60,15 @@ interface DadoGrafico {
   vendas: number;
 }
 
+interface ProdutoTop {
+  nome: string;
+  vendas: number;
+  lucro: number;
+}
+
 type PeriodoTipo = 'hoje' | 'semana' | 'mes' | 'personalizado';
+
+const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
 
 export default function DashboardPage() {
   const [periodo, setPeriodo] = useState<PeriodoTipo>('mes');
@@ -60,17 +89,38 @@ export default function DashboardPage() {
     lucroLiquido: 0,
     totalVendas: 0,
     ticketMedio: 0,
+    quantidadeVendida: 0,
   });
+
+  const [estoque, setEstoque] = useState<EstoqueInfo>({
+    totalProdutos: 0,
+    totalItens: 0,
+    valorCusto: 0,
+    valorVenda: 0,
+    lucroEsperado: 0,
+    margemMedia: 0,
+  });
+
+  const [produtosTop, setProdutosTop] = useState<ProdutoTop[]>([]);
   const [dadosGrafico, setDadosGrafico] = useState<DadoGrafico[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [metaDiaria, setMetaDiaria] = useState(100);
-  const [totalProdutos, setTotalProdutos] = useState(0);
+  const [metaMensal, setMetaMensal] = useState(3000);
 
   useEffect(() => {
-    carregarDados();
-    carregarMeta();
-    carregarProdutos();
+    carregarTudo();
   }, [periodo, dataInicio, dataFim]);
+
+  const carregarTudo = async () => {
+    setIsLoading(true);
+    await Promise.all([
+      carregarDados(),
+      carregarEstoque(),
+      carregarMeta(),
+      carregarProdutosTop(),
+    ]);
+    setIsLoading(false);
+  };
 
   const getDateRange = () => {
     const agora = new Date();
@@ -110,33 +160,95 @@ export default function DashboardPage() {
       const supabase = getSupabaseClient();
       const { data } = await supabase
         .from('configuracoes')
-        .select('meta_diaria')
+        .select('meta_diaria, meta_mensal')
         .single();
       
-      if (data?.meta_diaria) {
-        setMetaDiaria(Number(data.meta_diaria));
+      if (data) {
+        setMetaDiaria(Number(data.meta_diaria) || 100);
+        setMetaMensal(Number(data.meta_mensal) || 3000);
       }
     } catch (error) {
       console.error('Erro ao carregar meta:', error);
     }
   };
 
-  const carregarProdutos = async () => {
+  const carregarEstoque = async () => {
     try {
       const supabase = getSupabaseClient();
-      const { count } = await supabase
+      const { data: produtos } = await supabase
         .from('produtos')
-        .select('*', { count: 'exact', head: true })
+        .select('*')
         .eq('ativo', true);
-      
-      setTotalProdutos(count || 0);
+
+      if (produtos && produtos.length > 0) {
+        const totalProdutos = produtos.length;
+        const totalItens = produtos.reduce((acc: number, p: any) => acc + p.quantidade, 0);
+        const valorCusto = produtos.reduce((acc: number, p: any) => acc + (p.quantidade * Number(p.valor_pago)), 0);
+        const valorVenda = produtos.reduce((acc: number, p: any) => acc + (p.quantidade * Number(p.valor_venda)), 0);
+        
+        // Calcular lucro esperado considerando taxas
+        let lucroEsperadoTotal = 0;
+        let somaMargens = 0;
+        
+        produtos.forEach((p: any) => {
+          const calculo = calcularLucroUnitario(Number(p.valor_venda), Number(p.valor_pago), p.taxa_tipo);
+          lucroEsperadoTotal += calculo.lucroUnitario * p.quantidade;
+          somaMargens += calculo.margemPercentual;
+        });
+
+        const margemMedia = produtos.length > 0 ? somaMargens / produtos.length : 0;
+
+        setEstoque({
+          totalProdutos,
+          totalItens,
+          valorCusto,
+          valorVenda,
+          lucroEsperado: lucroEsperadoTotal,
+          margemMedia,
+        });
+      }
     } catch (error) {
-      console.error('Erro ao carregar produtos:', error);
+      console.error('Erro ao carregar estoque:', error);
+    }
+  };
+
+  const carregarProdutosTop = async () => {
+    try {
+      const supabase = getSupabaseClient();
+      const { inicio, fim } = getDateRange();
+      
+      const { data: vendas } = await supabase
+        .from('vendas')
+        .select('produto_nome, qtd_vendida, lucro_liquido')
+        .gte('data_venda', inicio.toISOString())
+        .lte('data_venda', fim.toISOString());
+
+      if (vendas && vendas.length > 0) {
+        // Agrupar por produto
+        const grupos: Record<string, { vendas: number; lucro: number }> = {};
+        vendas.forEach((v: any) => {
+          if (!grupos[v.produto_nome]) {
+            grupos[v.produto_nome] = { vendas: 0, lucro: 0 };
+          }
+          grupos[v.produto_nome].vendas += v.qtd_vendida;
+          grupos[v.produto_nome].lucro += Number(v.lucro_liquido);
+        });
+
+        const top = Object.entries(grupos)
+          .map(([nome, dados]) => ({ nome, ...dados }))
+          .sort((a, b) => b.lucro - a.lucro)
+          .slice(0, 5);
+
+        setProdutosTop(top);
+      } else {
+        setProdutosTop([]);
+      }
+    } catch (error) {
+      console.error('Erro ao carregar produtos top:', error);
     }
   };
 
   const carregarDados = async () => {
-    setIsLoading(true);
     try {
       const supabase = getSupabaseClient();
       const { inicio, fim } = getDateRange();
@@ -160,6 +272,7 @@ export default function DashboardPage() {
           return acc + taxaPerc + Number(v.taxa_fixa || 0);
         }, 0);
         const lucroLiquido = vendas.reduce((acc: number, v: any) => acc + Number(v.lucro_liquido), 0);
+        const quantidadeVendida = vendas.reduce((acc: number, v: any) => acc + v.qtd_vendida, 0);
 
         setResumo({
           faturamento,
@@ -168,6 +281,7 @@ export default function DashboardPage() {
           lucroLiquido,
           totalVendas: vendas.length,
           ticketMedio: faturamento / vendas.length,
+          quantidadeVendida,
         });
 
         // Agrupar por dia para gráfico
@@ -198,17 +312,23 @@ export default function DashboardPage() {
           lucroLiquido: 0,
           totalVendas: 0,
           ticketMedio: 0,
+          quantidadeVendida: 0,
         });
         setDadosGrafico([]);
       }
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  const progressoMeta = metaDiaria > 0 ? Math.min((resumo.lucroLiquido / metaDiaria) * 100, 100) : 0;
+  const getMeta = () => {
+    if (periodo === 'hoje') return metaDiaria;
+    if (periodo === 'mes') return metaMensal;
+    if (periodo === 'semana') return metaDiaria * 7;
+    return metaMensal;
+  };
+
+  const progressoMeta = getMeta() > 0 ? Math.min((resumo.lucroLiquido / getMeta()) * 100, 100) : 0;
 
   const getPeriodoLabel = () => {
     switch (periodo) {
@@ -220,6 +340,9 @@ export default function DashboardPage() {
     }
   };
 
+  // ROI = (Lucro / Custo) * 100
+  const roi = resumo.gastoEstoque > 0 ? ((resumo.lucroLiquido / resumo.gastoEstoque) * 100) : 0;
+
   return (
     <div className="min-h-screen bg-gray-50 pt-safe pb-24">
       {/* Header */}
@@ -230,7 +353,7 @@ export default function DashboardPage() {
           transition={{ duration: 0.3 }}
         >
           <h1 className="text-2xl font-bold">Dashboard</h1>
-          <p className="text-primary-200 mt-1">Acompanhe suas vendas</p>
+          <p className="text-primary-200 mt-1">Visão completa do seu negócio</p>
         </motion.div>
 
         {/* Seletor de Período */}
@@ -304,44 +427,42 @@ export default function DashboardPage() {
           </motion.div>
         )}
 
-        {/* Meta do Dia */}
-        {periodo === 'hoje' && metaDiaria > 0 && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ delay: 0.1 }}
-            className="mt-6 bg-white/10 backdrop-blur-sm rounded-2xl p-4"
-          >
-            <div className="flex items-center justify-between mb-2">
-              <div className="flex items-center gap-2">
-                <Target className="w-5 h-5" />
-                <span className="text-sm font-medium">Meta do Dia</span>
-              </div>
-              <span className="text-lg font-bold">
-                {formatarMoeda(resumo.lucroLiquido)} / {formatarMoeda(metaDiaria)}
-              </span>
+        {/* Meta Progress */}
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ delay: 0.1 }}
+          className="mt-6 bg-white/10 backdrop-blur-sm rounded-2xl p-4"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <Target className="w-5 h-5" />
+              <span className="text-sm font-medium">Meta {periodo === 'hoje' ? 'Diária' : periodo === 'mes' ? 'Mensal' : 'do Período'}</span>
             </div>
-            <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
-              <motion.div
-                initial={{ width: 0 }}
-                animate={{ width: `${progressoMeta}%` }}
-                transition={{ duration: 0.5, delay: 0.2 }}
-                className={`h-full rounded-full ${
-                  progressoMeta >= 100 ? 'bg-green-400' : 'bg-white'
-                }`}
-              />
-            </div>
-            <p className="text-xs text-primary-200 mt-2">
-              {progressoMeta >= 100 
-                ? '🎉 Meta atingida!' 
-                : `${progressoMeta.toFixed(0)}% da meta`
-              }
-            </p>
-          </motion.div>
-        )}
+            <span className="text-lg font-bold">
+              {formatarMoeda(resumo.lucroLiquido)} / {formatarMoeda(getMeta())}
+            </span>
+          </div>
+          <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
+            <motion.div
+              initial={{ width: 0 }}
+              animate={{ width: `${progressoMeta}%` }}
+              transition={{ duration: 0.5, delay: 0.2 }}
+              className={`h-full rounded-full ${
+                progressoMeta >= 100 ? 'bg-green-400' : 'bg-white'
+              }`}
+            />
+          </div>
+          <p className="text-xs text-primary-200 mt-2">
+            {progressoMeta >= 100 
+              ? '🎉 Meta atingida!' 
+              : `${progressoMeta.toFixed(0)}% da meta`
+            }
+          </p>
+        </motion.div>
       </div>
 
-      {/* Cards de Resumo */}
+      {/* Cards Principais - Lucro Real vs Esperado */}
       <div className="px-4 -mt-8">
         <div className="grid grid-cols-2 gap-3">
           <motion.div
@@ -349,16 +470,15 @@ export default function DashboardPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
           >
-            <Card className="p-4">
+            <Card className="p-4 border-l-4 border-l-green-500">
               <div className="flex items-center gap-2 mb-2">
-                <div className="p-2 bg-green-100 rounded-lg">
-                  <DollarSign className="w-4 h-4 text-green-600" />
-                </div>
-                <span className="text-xs text-gray-500">Faturamento</span>
+                <TrendingUp className="w-4 h-4 text-green-600" />
+                <span className="text-xs text-gray-500">Lucro Real</span>
               </div>
-              <p className="text-lg font-bold text-gray-900">
-                {formatarMoeda(resumo.faturamento)}
+              <p className={`text-xl font-bold ${resumo.lucroLiquido >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                {formatarMoeda(resumo.lucroLiquido)}
               </p>
+              <p className="text-xs text-gray-400 mt-1">{getPeriodoLabel()}</p>
             </Card>
           </motion.div>
 
@@ -367,54 +487,93 @@ export default function DashboardPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.15 }}
           >
-            <Card className="p-4">
+            <Card className="p-4 border-l-4 border-l-blue-500">
               <div className="flex items-center gap-2 mb-2">
-                <div className="p-2 bg-blue-100 rounded-lg">
-                  <TrendingUp className="w-4 h-4 text-blue-600" />
-                </div>
-                <span className="text-xs text-gray-500">Lucro Líquido</span>
+                <PiggyBank className="w-4 h-4 text-blue-600" />
+                <span className="text-xs text-gray-500">Lucro Esperado</span>
               </div>
-              <p className={`text-lg font-bold ${resumo.lucroLiquido >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {formatarMoeda(resumo.lucroLiquido)}
+              <p className="text-xl font-bold text-blue-600">
+                {formatarMoeda(estoque.lucroEsperado)}
               </p>
+              <p className="text-xs text-gray-400 mt-1">Se vender todo estoque</p>
             </Card>
           </motion.div>
+        </div>
+      </div>
 
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
-          >
-            <Card className="p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="p-2 bg-purple-100 rounded-lg">
-                  <ShoppingCart className="w-4 h-4 text-purple-600" />
-                </div>
-                <span className="text-xs text-gray-500">Vendas</span>
-              </div>
-              <p className="text-lg font-bold text-gray-900">
-                {resumo.totalVendas}
-              </p>
-            </Card>
-          </motion.div>
+      {/* Cards Estoque */}
+      <div className="px-4 mt-4">
+        <h3 className="text-sm font-semibold text-gray-600 mb-3">💼 Estoque</h3>
+        <div className="grid grid-cols-2 gap-3">
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Box className="w-4 h-4 text-orange-600" />
+              <span className="text-xs text-gray-500">Valor Custo</span>
+            </div>
+            <p className="text-lg font-bold text-gray-900">
+              {formatarMoeda(estoque.valorCusto)}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">{estoque.totalItens} itens</p>
+          </Card>
 
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.25 }}
-          >
-            <Card className="p-4">
-              <div className="flex items-center gap-2 mb-2">
-                <div className="p-2 bg-orange-100 rounded-lg">
-                  <Package className="w-4 h-4 text-orange-600" />
-                </div>
-                <span className="text-xs text-gray-500">Produtos</span>
-              </div>
-              <p className="text-lg font-bold text-gray-900">
-                {totalProdutos}
-              </p>
-            </Card>
-          </motion.div>
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <DollarSign className="w-4 h-4 text-green-600" />
+              <span className="text-xs text-gray-500">Valor Venda</span>
+            </div>
+            <p className="text-lg font-bold text-gray-900">
+              {formatarMoeda(estoque.valorVenda)}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">Potencial bruto</p>
+          </Card>
+
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Package className="w-4 h-4 text-purple-600" />
+              <span className="text-xs text-gray-500">Produtos</span>
+            </div>
+            <p className="text-lg font-bold text-gray-900">
+              {estoque.totalProdutos}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">Cadastrados</p>
+          </Card>
+
+          <Card className="p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Percent className="w-4 h-4 text-indigo-600" />
+              <span className="text-xs text-gray-500">Margem Média</span>
+            </div>
+            <p className="text-lg font-bold text-gray-900">
+              {estoque.margemMedia.toFixed(1)}%
+            </p>
+            <p className="text-xs text-gray-400 mt-1">Por produto</p>
+          </Card>
+        </div>
+      </div>
+
+      {/* Cards Vendas do Período */}
+      <div className="px-4 mt-6">
+        <h3 className="text-sm font-semibold text-gray-600 mb-3">📊 Vendas - {getPeriodoLabel()}</h3>
+        <div className="grid grid-cols-3 gap-3">
+          <Card className="p-3 text-center">
+            <ShoppingCart className="w-5 h-5 text-purple-600 mx-auto mb-1" />
+            <p className="text-lg font-bold text-gray-900">{resumo.totalVendas}</p>
+            <p className="text-xs text-gray-500">Vendas</p>
+          </Card>
+
+          <Card className="p-3 text-center">
+            <Package className="w-5 h-5 text-blue-600 mx-auto mb-1" />
+            <p className="text-lg font-bold text-gray-900">{resumo.quantidadeVendida}</p>
+            <p className="text-xs text-gray-500">Unidades</p>
+          </Card>
+
+          <Card className="p-3 text-center">
+            <BarChart3 className="w-5 h-5 text-green-600 mx-auto mb-1" />
+            <p className={`text-lg font-bold ${roi >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              {roi.toFixed(0)}%
+            </p>
+            <p className="text-xs text-gray-500">ROI</p>
+          </Card>
         </div>
       </div>
 
@@ -422,7 +581,7 @@ export default function DashboardPage() {
       <div className="px-4 mt-6">
         <Card className="p-4">
           <h3 className="text-sm font-semibold text-gray-900 mb-4">
-            Detalhes - {getPeriodoLabel()}
+            💰 Resumo Financeiro - {getPeriodoLabel()}
           </h3>
           <div className="space-y-3">
             <div className="flex justify-between items-center">
@@ -444,27 +603,62 @@ export default function DashboardPage() {
               </span>
             </div>
             <div className="border-t pt-3 flex justify-between items-center">
-              <span className="text-sm font-semibold text-gray-900">Lucro Líquido</span>
-              <span className={`text-lg font-bold ${resumo.lucroLiquido >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              <span className="text-sm font-semibold text-gray-900">= Lucro Líquido</span>
+              <span className={`text-xl font-bold ${resumo.lucroLiquido >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                 {formatarMoeda(resumo.lucroLiquido)}
               </span>
             </div>
             {resumo.totalVendas > 0 && (
-              <div className="flex justify-between items-center text-xs text-gray-400">
-                <span>Ticket Médio</span>
-                <span>{formatarMoeda(resumo.ticketMedio)}</span>
-              </div>
+              <>
+                <div className="border-t pt-3 flex justify-between items-center text-xs text-gray-400">
+                  <span>Ticket Médio</span>
+                  <span>{formatarMoeda(resumo.ticketMedio)}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs text-gray-400">
+                  <span>Lucro por Venda</span>
+                  <span>{formatarMoeda(resumo.lucroLiquido / resumo.totalVendas)}</span>
+                </div>
+              </>
             )}
           </div>
         </Card>
       </div>
+
+      {/* Top Produtos */}
+      {produtosTop.length > 0 && (
+        <div className="px-4 mt-6">
+          <Card className="p-4">
+            <h3 className="text-sm font-semibold text-gray-900 mb-4">
+              🏆 Top Produtos - {getPeriodoLabel()}
+            </h3>
+            <div className="space-y-3">
+              {produtosTop.map((produto, index) => (
+                <div key={produto.nome} className="flex items-center gap-3">
+                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white ${
+                    index === 0 ? 'bg-yellow-500' : index === 1 ? 'bg-gray-400' : index === 2 ? 'bg-orange-600' : 'bg-gray-300'
+                  }`}>
+                    {index + 1}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-gray-900 truncate">{produto.nome}</p>
+                    <p className="text-xs text-gray-500">{produto.vendas} vendas</p>
+                  </div>
+                  <span className={`text-sm font-bold ${produto.lucro >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {formatarMoeda(produto.lucro)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </Card>
+        </div>
+      )}
 
       {/* Gráfico */}
       {dadosGrafico.length > 0 && (
         <div className="px-4 mt-6">
           <Card className="p-4">
             <h3 className="text-sm font-semibold text-gray-900 mb-4">
-              Evolução - {getPeriodoLabel()}
+              📈 Evolução - {getPeriodoLabel()}
             </h3>
             <div className="h-48">
               <ResponsiveContainer width="100%" height="100%">
@@ -521,12 +715,12 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {/* Mensagem quando não há dados */}
+      {/* Mensagem quando não há vendas */}
       {!isLoading && resumo.totalVendas === 0 && (
         <div className="px-4 mt-6">
           <Card className="p-8 text-center">
             <ShoppingCart className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <h3 className="text-gray-500 font-medium">Nenhuma venda encontrada</h3>
+            <h3 className="text-gray-500 font-medium">Nenhuma venda no período</h3>
             <p className="text-sm text-gray-400 mt-1">
               Registre vendas no Estoque para ver os dados aqui
             </p>
