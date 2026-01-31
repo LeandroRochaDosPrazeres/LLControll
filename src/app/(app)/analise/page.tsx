@@ -139,12 +139,16 @@ export default function AnalisePage() {
         throw new Error('Usuário não autenticado');
       }
 
-      const params = new URLSearchParams();
-      if (query) params.set('q', query);
-      if (itemId) params.set('item_id', itemId);
-      params.set('user_id', currentUserId);
-
-      const response = await fetch(`/api/mercadolivre/search?${params}`);
+      // Usar POST como as outras APIs do ML que funcionam
+      const response = await fetch('/api/mercadolivre/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: currentUserId,
+          query: query || undefined,
+          item_id: itemId || undefined,
+        }),
+      });
       
       if (!response.ok) {
         const errorData = await response.json();
