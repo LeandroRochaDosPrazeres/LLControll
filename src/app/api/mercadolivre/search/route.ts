@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@supabase/supabase-js';
+import { refreshToken } from '@/lib/mercadolivre/client';
 
 // Forçar rota dinâmica para evitar erro de build
 export const dynamic = 'force-dynamic';
@@ -49,18 +51,68 @@ function calcularMediana(valores: number[]): number {
 
 // Função para calcular preço sugerido competitivo
 function calcularPrecoSugerido(precoMedio: number, precoMediano: number, precoMinimo: number): number {
-  // Sugere um preço ligeiramente abaixo da mediana, mas não muito abaixo do mínimo
   const sugerido = precoMediano * 0.95; // 5% abaixo da mediana
   const pisoMinimo = precoMinimo * 1.05; // Não menos que 5% acima do mínimo
   return Math.max(sugerido, pisoMinimo);
+}
+
+// Função para obter Supabase admin client
+function getSupabaseAdmin() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) {
+    throw new Error('Supabase environment variables not configured');
+  }
+  return createClient(url, key);
+}
+
+// Função para obter access token válido do usuário
+async function getValidAccessToken(userId: string): Promise<string | null> {
+  const supabase = getSupabaseAdmin();
+  
+  const { data: config } = await supabase
+    .from('configuracoes')
+    .select('ml_user_id, ml_access_token, ml_refresh_token, ml_token_expires')
+    .eq('user_id', userId)
+    .single();
+
+  if (!config?.ml_access_token) {
+    return null;
+  }
+
+  let accessToken = config.ml_access_token;
+
+  // Verificar se token expirou
+  if (config.ml_token_expires && new Date(config.ml_token_expires) < new Date()) {
+    try {
+      const newToken = await refreshToken(config.ml_refresh_token);
+      accessToken = newToken.access_token;
+
+      // Atualizar no banco
+      await supabase
+        .from('configuracoes')
+        .update({
+          ml_access_token: newToken.access_token,
+          ml_refresh_token: newToken.refresh_token,
+          ml_token_expires: new Date(Date.now() + newToken.expires_in * 1000).toISOString(),
+        })
+        .eq('user_id', userId);
+    } catch (err) {
+      console.error('Erro ao renovar token:', err);
+      return null;
+    }
+  }
+
+  return accessToken;
 }
 
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const query = searchParams.get('q');
+    const userId = searchParams.get('user_id');
     const limit = parseInt(searchParams.get('limit') || '50');
-    const itemId = searchParams.get('item_id'); // Para buscar concorrentes de um item específico
+    const itemId = searchParams.get('item_id');
 
     if (!query && !itemId) {
       return NextResponse.json(
@@ -69,11 +121,24 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // Obter token de acesso do usuário (se disponível)
+    let accessToken: string | null = null;
+    if (userId) {
+      accessToken = await getValidAccessToken(userId);
+    }
+
     let searchQuery = query;
 
     // Se temos um item_id, buscar o título do item para usar como query
     if (itemId && !query) {
-      const itemResponse = await fetch(`${ML_API_BASE}/items/${itemId}`);
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+      };
+      if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+      }
+      
+      const itemResponse = await fetch(`${ML_API_BASE}/items/${itemId}`, { headers });
       if (itemResponse.ok) {
         const itemData = await itemResponse.json();
         searchQuery = itemData.title;
@@ -85,20 +150,32 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Buscar produtos no Mercado Livre (API pública)
+    // Buscar produtos no Mercado Livre
     const searchUrl = `${ML_API_BASE}/sites/MLB/search?q=${encodeURIComponent(searchQuery!)}&limit=${limit}&sort=relevance`;
     
-    const searchResponse = await fetch(searchUrl, {
-      headers: {
-        'Accept': 'application/json',
-        'User-Agent': 'LLControll/1.0',
-      },
-      next: { revalidate: 300 }, // Cache por 5 minutos
-    });
+    const headers: Record<string, string> = {
+      'Accept': 'application/json',
+    };
+    
+    // Usar token de acesso se disponível (necessário para a API)
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+    
+    const searchResponse = await fetch(searchUrl, { headers });
 
     if (!searchResponse.ok) {
       const errorText = await searchResponse.text();
       console.error('ML API Error:', searchResponse.status, errorText);
+      
+      // Se erro 403, significa que precisa de autenticação
+      if (searchResponse.status === 403) {
+        return NextResponse.json(
+          { error: 'Conecte sua conta do Mercado Livre na aba ML para usar esta funcionalidade' },
+          { status: 403 }
+        );
+      }
+      
       throw new Error(`Erro na API do Mercado Livre: ${searchResponse.status}`);
     }
 
@@ -122,9 +199,12 @@ export async function GET(request: NextRequest) {
 
     // Filtrar itens do próprio vendedor se itemId foi fornecido
     let itensAnalise = results;
-    if (itemId) {
-      // Buscar seller_id do item original para excluir
-      const itemResponse = await fetch(`${ML_API_BASE}/items/${itemId}`);
+    if (itemId && accessToken) {
+      const itemHeaders: Record<string, string> = {
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
+      };
+      const itemResponse = await fetch(`${ML_API_BASE}/items/${itemId}`, { headers: itemHeaders });
       if (itemResponse.ok) {
         const itemData = await itemResponse.json();
         const mySellerId = itemData.seller_id;
@@ -160,7 +240,7 @@ export async function GET(request: NextRequest) {
       precoSugerido,
       fretGratisPercentual,
       vendedoresPremium,
-      itens: itensAnalise.slice(0, 20), // Retornar apenas os 20 primeiros
+      itens: itensAnalise.slice(0, 20),
     };
 
     return NextResponse.json(resultado);

@@ -82,8 +82,21 @@ export default function AnalisePage() {
   const [isLoadingProdutos, setIsLoadingProdutos] = useState(false);
   const [produtoAnalisando, setProdutoAnalisando] = useState<string | null>(null);
   const [analisesProdutos, setAnalisesProdutos] = useState<Record<string, AnaliseResultado>>({});
+  const [userId, setUserId] = useState<string | null>(null);
   
   const { addToast } = useToast();
+
+  // Obter userId do usuário logado
+  useEffect(() => {
+    const getUserId = async () => {
+      const supabase = getSupabaseClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+        setUserId(user.id);
+      }
+    };
+    getUserId();
+  }, []);
 
   // Carregar produtos do usuário
   useEffect(() => {
@@ -120,9 +133,14 @@ export default function AnalisePage() {
       const params = new URLSearchParams();
       if (query) params.set('q', query);
       if (itemId) params.set('item_id', itemId);
+      if (userId) params.set('user_id', userId);
 
       const response = await fetch(`/api/mercadolivre/search?${params}`);
-      if (!response.ok) throw new Error('Erro na busca');
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Erro na busca');
+      }
 
       const data: AnaliseResultado = await response.json();
       setResultadoAnalise(data);
@@ -130,9 +148,9 @@ export default function AnalisePage() {
       if (itemId) {
         setAnalisesProdutos((prev) => ({ ...prev, [itemId]: data }));
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Erro na busca:', error);
-      addToast({ type: 'error', title: 'Erro ao buscar no Mercado Livre' });
+      addToast({ type: 'error', title: error.message || 'Erro ao buscar no Mercado Livre' });
     } finally {
       setIsSearching(false);
       setProdutoAnalisando(null);
