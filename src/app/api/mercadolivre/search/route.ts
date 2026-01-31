@@ -114,6 +114,8 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get('limit') || '50');
     const itemId = searchParams.get('item_id');
 
+    console.log('Search API - userId:', userId, 'query:', query);
+
     if (!query && !itemId) {
       return NextResponse.json(
         { error: 'Parâmetro "q" ou "item_id" é obrigatório' },
@@ -121,10 +123,24 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // Obter token de acesso do usuário (se disponível)
-    let accessToken: string | null = null;
-    if (userId) {
-      accessToken = await getValidAccessToken(userId);
+    // Verificar se user_id foi fornecido
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Conecte sua conta do Mercado Livre na aba ML para usar esta funcionalidade' },
+        { status: 403 }
+      );
+    }
+
+    // Obter token de acesso do usuário
+    const accessToken = await getValidAccessToken(userId);
+    
+    console.log('Search API - accessToken found:', !!accessToken);
+
+    if (!accessToken) {
+      return NextResponse.json(
+        { error: 'Conecte sua conta do Mercado Livre na aba ML para usar esta funcionalidade' },
+        { status: 403 }
+      );
     }
 
     let searchQuery = query;
@@ -133,10 +149,8 @@ export async function GET(request: NextRequest) {
     if (itemId && !query) {
       const headers: Record<string, string> = {
         'Accept': 'application/json',
+        'Authorization': `Bearer ${accessToken}`,
       };
-      if (accessToken) {
-        headers['Authorization'] = `Bearer ${accessToken}`;
-      }
       
       const itemResponse = await fetch(`${ML_API_BASE}/items/${itemId}`, { headers });
       if (itemResponse.ok) {
@@ -155,12 +169,8 @@ export async function GET(request: NextRequest) {
     
     const headers: Record<string, string> = {
       'Accept': 'application/json',
+      'Authorization': `Bearer ${accessToken}`,
     };
-    
-    // Usar token de acesso se disponível (necessário para a API)
-    if (accessToken) {
-      headers['Authorization'] = `Bearer ${accessToken}`;
-    }
     
     const searchResponse = await fetch(searchUrl, { headers });
 

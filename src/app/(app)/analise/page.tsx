@@ -130,10 +130,19 @@ export default function AnalisePage() {
 
     setIsSearching(true);
     try {
+      // Buscar userId diretamente para garantir que está disponível
+      const supabase = getSupabaseClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      const currentUserId = user?.id;
+      
+      if (!currentUserId) {
+        throw new Error('Usuário não autenticado');
+      }
+
       const params = new URLSearchParams();
       if (query) params.set('q', query);
       if (itemId) params.set('item_id', itemId);
-      if (userId) params.set('user_id', userId);
+      params.set('user_id', currentUserId);
 
       const response = await fetch(`/api/mercadolivre/search?${params}`);
       
