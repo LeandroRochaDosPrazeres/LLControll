@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Cliente Supabase com service role para operações administrativas
-const supabaseAdmin = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+// Função para criar o cliente Supabase (lazy initialization)
+function getSupabaseAdmin(): SupabaseClient {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  
+  if (!url || !key) {
+    throw new Error('Supabase environment variables not configured');
+  }
+  
+  return createClient(url, key);
+}
 
 // Tipos para notificações do Mercado Livre
 interface MLNotification {
@@ -87,6 +93,8 @@ async function fetchOrderDetails(
  * Processa uma ordem aprovada do Mercado Livre
  */
 async function processOrder(order: MLOrder, userId: string) {
+  const supabaseAdmin = getSupabaseAdmin();
+  
   for (const item of order.order_items) {
     const mlItemId = item.item.id;
 
@@ -199,6 +207,8 @@ export async function POST(request: NextRequest) {
 
     const orderId = resourceMatch[1];
     const mlUserId = notification.user_id;
+    
+    const supabaseAdmin = getSupabaseAdmin();
 
     // Buscar configurações do usuário pelo ml_user_id
     const { data: config, error: configError } = await supabaseAdmin
