@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+// Forçar rota dinâmica para evitar erro de build
+export const dynamic = 'force-dynamic';
+
 const ML_API_BASE = 'https://api.mercadolibre.com';
 
 interface MLSearchResult {
@@ -83,17 +86,20 @@ export async function GET(request: NextRequest) {
     }
 
     // Buscar produtos no Mercado Livre (API pública)
-    const searchResponse = await fetch(
-      `${ML_API_BASE}/sites/MLB/search?q=${encodeURIComponent(searchQuery!)}&limit=${limit}&sort=relevance`,
-      {
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
-    );
+    const searchUrl = `${ML_API_BASE}/sites/MLB/search?q=${encodeURIComponent(searchQuery!)}&limit=${limit}&sort=relevance`;
+    
+    const searchResponse = await fetch(searchUrl, {
+      headers: {
+        'Accept': 'application/json',
+        'User-Agent': 'LLControll/1.0',
+      },
+      next: { revalidate: 300 }, // Cache por 5 minutos
+    });
 
     if (!searchResponse.ok) {
-      throw new Error('Erro ao buscar no Mercado Livre');
+      const errorText = await searchResponse.text();
+      console.error('ML API Error:', searchResponse.status, errorText);
+      throw new Error(`Erro na API do Mercado Livre: ${searchResponse.status}`);
     }
 
     const searchData = await searchResponse.json();
