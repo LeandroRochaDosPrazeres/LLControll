@@ -70,11 +70,16 @@ function getSupabaseAdmin() {
 async function getValidAccessToken(userId: string): Promise<string | null> {
   const supabase = getSupabaseAdmin();
   
-  const { data: config } = await supabase
+  console.log('Buscando token para userId:', userId);
+  
+  const { data: config, error } = await supabase
     .from('configuracoes')
-    .select('ml_user_id, ml_access_token, ml_refresh_token, ml_token_expires')
+    .select('ml_user_id, ml_access_token, ml_refresh_token, ml_token_expires, ml_token_expires_at')
     .eq('user_id', userId)
     .single();
+
+  console.log('Config encontrada:', config ? 'sim' : 'não', 'erro:', error?.message);
+  console.log('ml_access_token presente:', !!config?.ml_access_token);
 
   if (!config?.ml_access_token) {
     return null;
@@ -82,13 +87,15 @@ async function getValidAccessToken(userId: string): Promise<string | null> {
 
   let accessToken = config.ml_access_token;
 
-  // Verificar se token expirou
-  if (config.ml_token_expires && new Date(config.ml_token_expires) < new Date()) {
+  // Verificar se token expirou (suporta ambos os nomes de campo)
+  const tokenExpires = config.ml_token_expires || config.ml_token_expires_at;
+  if (tokenExpires && new Date(tokenExpires) < new Date()) {
+    console.log('Token expirado, renovando...');
     try {
       const newToken = await refreshToken(config.ml_refresh_token);
       accessToken = newToken.access_token;
 
-      // Atualizar no banco
+      // Atualizar no banco (usar o campo que existe)
       await supabase
         .from('configuracoes')
         .update({
@@ -97,12 +104,15 @@ async function getValidAccessToken(userId: string): Promise<string | null> {
           ml_token_expires: new Date(Date.now() + newToken.expires_in * 1000).toISOString(),
         })
         .eq('user_id', userId);
+      
+      console.log('Token renovado com sucesso');
     } catch (err) {
       console.error('Erro ao renovar token:', err);
       return null;
     }
   }
 
+  console.log('Retornando token válido');
   return accessToken;
 }
 
