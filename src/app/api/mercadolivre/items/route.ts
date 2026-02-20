@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getMLItems } from '@/lib/mercadolivre/client';
-import { getValidToken, MLAuthError } from '@/lib/mercadolivre/token';
+import { getValidToken, callMLApi, MLAuthError } from '@/lib/mercadolivre/token';
+
+const ML_API_BASE = 'https://api.mercadolibre.com';
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,11 +15,37 @@ export async function POST(request: NextRequest) {
     // Obter token válido (silent refresh automático)
     const credentials = await getValidToken(user_id);
 
-    // Buscar anúncios do ML
-    const items = await getMLItems(
-      credentials.accessToken,
-      parseInt(credentials.mlUserId)
+    // Buscar IDs dos itens com retry automático em 401
+    const idsResponse = await callMLApi(
+      `${ML_API_BASE}/users/${credentials.mlUserId}/items/search?limit=50`,
+      credentials
     );
+
+    if (!idsResponse.ok) {
+      const errBody = await idsResponse.json().catch(() => ({}));
+      throw new Error(errBody.message || 'Erro ao buscar anúncios');
+    }
+
+    const idsData = await idsResponse.json();
+    const itemIds: string[] = idsData.results || [];
+
+    if (itemIds.length === 0) {
+      return NextResponse.json({ items: [] });
+    }
+
+    // Buscar detalhes (multiget não requer auth header na maioria dos casos,
+    // mas incluímos por segurança)
+    const itemsResponse = await callMLApi(
+      `${ML_API_BASE}/items?ids=${itemIds.join(',')}`,
+      credentials
+    );
+
+    if (!itemsResponse.ok) {
+      throw new Error('Erro ao buscar detalhes dos anúncios');
+    }
+
+    const itemsData = await itemsResponse.json();
+    const items = itemsData.map((item: any) => item.body);
 
     return NextResponse.json({ items });
   } catch (err: any) {

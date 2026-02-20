@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getMLOrders } from '@/lib/mercadolivre/client';
-import { getValidToken, MLAuthError } from '@/lib/mercadolivre/token';
+import { getValidToken, callMLApi, MLAuthError } from '@/lib/mercadolivre/token';
+
+const ML_API_BASE = 'https://api.mercadolibre.com';
 
 export async function POST(request: NextRequest) {
   try {
@@ -14,14 +15,17 @@ export async function POST(request: NextRequest) {
     // Obter token válido (silent refresh automático)
     const credentials = await getValidToken(user_id);
 
-    // Buscar pedidos do ML
-    const orders = await getMLOrders(
-      credentials.accessToken,
-      parseInt(credentials.mlUserId),
-      'paid'
-    );
+    // Buscar pedidos com retry automático em 401
+    const url = `${ML_API_BASE}/orders/search?seller=${credentials.mlUserId}&order.status=paid&sort=date_desc&limit=50`;
+    const response = await callMLApi(url, credentials);
 
-    return NextResponse.json({ orders });
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({}));
+      throw new Error(errBody.message || 'Erro ao buscar pedidos');
+    }
+
+    const data = await response.json();
+    return NextResponse.json({ orders: data.results || [] });
   } catch (err: any) {
     console.error('Erro ao buscar pedidos:', err);
 

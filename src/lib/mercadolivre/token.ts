@@ -145,18 +145,29 @@ export async function getValidToken(userId: string): Promise<MLCredentials> {
 
   // 2. Verificar se precisa de refresh (expirado OU faltam < 5 min)
   const needsRefresh = (() => {
-    if (!config.ml_token_expires_at) return true; // sem data = assume expirado
+    // Se não temos data de expiração, NÃO assumir expirado.
+    // O token pode ser recém-obtido. Deixar callMLApi lidar com 401.
+    if (!config.ml_token_expires_at) {
+      console.log('[ML Auth] ml_token_expires_at é null — usando token atual sem refresh');
+      return false;
+    }
     const expiresAt = new Date(config.ml_token_expires_at).getTime();
     const now = Date.now();
+    const remaining = expiresAt - now;
+    console.log('[ML Auth] Token expira em', Math.round(remaining / 60000), 'minutos');
     return now >= expiresAt - REFRESH_BUFFER_MS;
   })();
 
   if (needsRefresh) {
     if (!config.ml_refresh_token) {
-      await clearInvalidTokens(supabase, userId);
-      throw new MLAuthError(
-        'Refresh token ausente. Reconecte sua conta do Mercado Livre.'
-      );
+      // Sem refresh token → não limpar access_token, talvez ainda funcione
+      console.warn('[ML Auth] Refresh necessário mas sem refresh_token — tentando com token atual');
+      return {
+        accessToken,
+        mlUserId: config.ml_user_id,
+        supabase,
+        userId,
+      };
     }
 
     console.log('[ML Auth] Silent refresh para user:', userId);
@@ -165,7 +176,7 @@ export async function getValidToken(userId: string): Promise<MLCredentials> {
       accessToken = newToken.access_token;
 
       // Atualizar tokens no banco
-      await supabase
+      const { error: updateError } = await supabase
         .from('configuracoes')
         .update({
           ml_access_token: newToken.access_token,
@@ -176,13 +187,16 @@ export async function getValidToken(userId: string): Promise<MLCredentials> {
         })
         .eq('user_id', userId);
 
-      console.log('[ML Auth] Token renovado com sucesso');
+      if (updateError) {
+        console.error('[ML Auth] Erro ao salvar token renovado:', updateError);
+      } else {
+        console.log('[ML Auth] Token renovado e salvo com sucesso');
+      }
     } catch (err) {
-      // Refresh falhou → tokens inválidos → forçar re-auth
-      await clearInvalidTokens(supabase, userId);
-      throw new MLAuthError(
-        'Sessão do Mercado Livre expirada. Reconecte sua conta em Ajustes.'
-      );
+      // Refresh falhou — MAS não limpar tokens!
+      // O access_token original ainda pode funcionar.
+      // callMLApi tentará novamente se der 401.
+      console.warn('[ML Auth] Refresh falhou, mantendo token atual:', err);
     }
   }
 
@@ -230,6 +244,7 @@ export async function callMLApi(
       .single();
 
     if (!config?.ml_refresh_token) {
+      // Sem refresh token → não tem como recuperar
       await clearInvalidTokens(credentials.supabase, credentials.userId);
       throw new MLAuthError('Sessão expirada. Reconecte sua conta do ML.');
     }
@@ -238,7 +253,7 @@ export async function callMLApi(
       const newToken = await doRefreshToken(config.ml_refresh_token);
       credentials.accessToken = newToken.access_token;
 
-      await credentials.supabase
+      const { error: updateError } = await credentials.supabase
         .from('configuracoes')
         .update({
           ml_access_token: newToken.access_token,
@@ -249,10 +264,15 @@ export async function callMLApi(
         })
         .eq('user_id', credentials.userId);
 
+      if (updateError) {
+        console.error('[ML API] Erro ao salvar token renovado:', updateError);
+      }
+
       // Retry com token novo
       response = await doFetch(newToken.access_token);
 
       if (response.status === 401 || response.status === 403) {
+        // Refresh funcionou mas ML ainda rejeita → tokens realmente inválidos
         await clearInvalidTokens(credentials.supabase, credentials.userId);
         throw new MLAuthError(
           'Token renovado mas ML continua rejeitando. Reconecte sua conta.'
@@ -260,6 +280,8 @@ export async function callMLApi(
       }
     } catch (err) {
       if (err instanceof MLAuthError) throw err;
+      // Refresh falhou → limpar e forçar re-auth
+      console.error('[ML API] Refresh falhou no retry:', err);
       await clearInvalidTokens(credentials.supabase, credentials.userId);
       throw new MLAuthError('Falha ao renovar sessão. Reconecte em Ajustes.');
     }

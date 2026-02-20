@@ -252,8 +252,7 @@ function AjustesContent() {
           ml_user_id: null,
           ml_access_token: null,
           ml_refresh_token: null,
-          ml_token_expires: null,
-          ml_nickname: null,
+          ml_token_expires_at: null,
         } as any)
         .eq('user_id', userId);
 

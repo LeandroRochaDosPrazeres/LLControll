@@ -79,28 +79,38 @@ export async function GET(request: NextRequest) {
         .eq('user_id', userId)
         .single();
 
+      const tokenPayload = {
+        ml_user_id: mlUser.id.toString(),
+        ml_access_token: tokenData.access_token,
+        ml_refresh_token: tokenData.refresh_token,
+        ml_token_expires_at: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
+      };
+
+      console.log('[ML Callback] Salvando tokens para user:', userId, 'expires_at:', tokenPayload.ml_token_expires_at);
+
       if (existingConfig) {
         // Atualizar
-        await supabase
+        const { error: updateError } = await supabase
           .from('configuracoes')
-          .update({
-            ml_user_id: mlUser.id.toString(),
-            ml_access_token: tokenData.access_token,
-            ml_refresh_token: tokenData.refresh_token,
-            ml_token_expires_at: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
-          })
+          .update(tokenPayload)
           .eq('user_id', userId);
+
+        if (updateError) {
+          console.error('[ML Callback] ERRO ao atualizar configuracoes:', updateError);
+          throw new Error(`Erro ao salvar tokens: ${updateError.message}`);
+        }
+        console.log('[ML Callback] Tokens atualizados com sucesso');
       } else {
         // Inserir
-        await supabase
+        const { error: insertError } = await supabase
           .from('configuracoes')
-          .insert({
-            user_id: userId,
-            ml_user_id: mlUser.id.toString(),
-            ml_access_token: tokenData.access_token,
-            ml_refresh_token: tokenData.refresh_token,
-            ml_token_expires_at: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
-          });
+          .insert({ user_id: userId, ...tokenPayload });
+
+        if (insertError) {
+          console.error('[ML Callback] ERRO ao inserir configuracoes:', insertError);
+          throw new Error(`Erro ao criar configuração: ${insertError.message}`);
+        }
+        console.log('[ML Callback] Configuração criada com sucesso');
       }
     }
 
