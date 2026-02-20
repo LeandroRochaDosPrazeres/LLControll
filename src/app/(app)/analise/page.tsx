@@ -83,6 +83,7 @@ export default function AnalisePage() {
   const [produtoAnalisando, setProdutoAnalisando] = useState<string | null>(null);
   const [analisesProdutos, setAnalisesProdutos] = useState<Record<string, AnaliseResultado>>({});
   const [userId, setUserId] = useState<string | null>(null);
+  const [debugInfo, setDebugInfo] = useState<any>(null);
   
   const { addToast } = useToast();
 
@@ -175,6 +176,7 @@ export default function AnalisePage() {
           });
           const debugData = await debugResp.json();
           console.error('=== DIAGNÓSTICO ML ===', JSON.stringify(debugData, null, 2));
+          setDebugInfo(debugData);
         } catch (debugErr) {
           console.error('Erro no diagnóstico:', debugErr);
         }
@@ -289,6 +291,24 @@ export default function AnalisePage() {
 
       {/* Content */}
       <div className="px-4 py-4">
+        {/* Debug info - temporário */}
+        {debugInfo && (
+          <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-xl">
+            <div className="flex justify-between items-center mb-2">
+              <h3 className="text-sm font-bold text-red-700">Diagnóstico ML (copie e envie)</h3>
+              <button
+                onClick={() => setDebugInfo(null)}
+                className="text-red-400 text-xs"
+              >
+                Fechar
+              </button>
+            </div>
+            <pre className="text-xs text-gray-700 whitespace-pre-wrap overflow-x-auto max-h-96 overflow-y-auto bg-white p-3 rounded-lg border">
+              {JSON.stringify(debugInfo, null, 2)}
+            </pre>
+          </div>
+        )}
+
         {activeTab === 'oportunidades' ? (
           <div className="space-y-4">
             {/* Busca */}
