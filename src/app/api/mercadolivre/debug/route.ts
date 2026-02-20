@@ -8,38 +8,86 @@ const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL || '';
 
-/**
- * Endpoint de diagnóstico para debugar problemas de autenticação ML.
- * Acesse: POST /api/mercadolivre/debug com { "user_id": "..." }
- */
 export async function POST(request: NextRequest) {
   const diagnostico: Record<string, any> = {
     timestamp: new Date().toISOString(),
-    env_vars: {},
-    db: {},
-    ml_api_test: {},
-    refresh_test: {},
   };
 
   try {
     const body = await request.json();
     const { user_id } = body;
 
-    // 1. Verificar variáveis de ambiente
+    // 1. Env vars
     diagnostico.env_vars = {
-      ML_APP_ID: ML_APP_ID ? `✅ presente (${ML_APP_ID.substring(0, 4)}...)` : '❌ AUSENTE',
-      ML_SECRET_KEY: ML_SECRET_KEY ? `✅ presente (${ML_SECRET_KEY.length} chars)` : '❌ AUSENTE',
-      NEXT_PUBLIC_SUPABASE_URL: SUPABASE_URL ? `✅ ${SUPABASE_URL}` : '❌ AUSENTE',
-      SUPABASE_SERVICE_ROLE_KEY: SUPABASE_SERVICE_KEY ? `✅ presente (${SUPABASE_SERVICE_KEY.length} chars)` : '❌ AUSENTE',
-      NEXT_PUBLIC_APP_URL: APP_URL ? `✅ ${APP_URL}` : '⚠️ AUSENTE (fallback usado)',
+      ML_APP_ID: ML_APP_ID ? `✅ (${ML_APP_ID.substring(0, 4)}...)` : '❌ AUSENTE',
+      ML_SECRET_KEY: ML_SECRET_KEY ? `✅ (${ML_SECRET_KEY.length} chars, starts: ${ML_SECRET_KEY.substring(0, 4)}...)` : '❌ AUSENTE',
+      NEXT_PUBLIC_APP_URL: APP_URL || '❌ AUSENTE',
+      SUPABASE_URL: SUPABASE_URL ? '✅' : '❌',
+      SUPABASE_SERVICE_KEY: SUPABASE_SERVICE_KEY ? `✅ (${SUPABASE_SERVICE_KEY.length} chars)` : '❌',
     };
 
+    // 2. URLs que são usadas no fluxo OAuth
+    const callbackUrl = `${APP_URL || 'https://ll-controll.vercel.app'}/api/mercadolivre/callback`;
+    diagnostico.oauth_config = {
+      redirect_uri_callback_usa: callbackUrl,
+      redirect_uri_cliente_usa: `(baseado em window.location.origin no browser)`,
+      IMPORTANTE: 'Estas URLs DEVEM ser idênticas à Redirect URI no ML Developer Console',
+      ml_developer_console: 'https://developers.mercadolivre.com.br/devcenter',
+    };
+
+    // 3. TESTE DIRETO: Credenciais do ML (client_credentials grant)
+    diagnostico.ml_credentials_test = {};
+    try {
+      const credTestResp = await fetch(`${ML_API_BASE}/oauth/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          Accept: 'application/json',
+        },
+        body: new URLSearchParams({
+          grant_type: 'client_credentials',
+          client_id: ML_APP_ID,
+          client_secret: ML_SECRET_KEY,
+        }),
+      });
+
+      const credTestBody = await credTestResp.json().catch(() => ({}));
+
+      diagnostico.ml_credentials_test = {
+        status_code: credTestResp.status,
+        ok: credTestResp.ok,
+        resultado: credTestResp.ok
+          ? '✅ ML_APP_ID e ML_SECRET_KEY são VÁLIDOS'
+          : `❌ Credenciais INVÁLIDAS - ${credTestResp.status}`,
+        response: credTestResp.ok
+          ? { token_type: credTestBody.token_type, scope: credTestBody.scope }
+          : credTestBody,
+      };
+    } catch (e: any) {
+      diagnostico.ml_credentials_test = { error: e.message };
+    }
+
+    // 4. Testar API pública do ML (sem auth)
+    try {
+      const pubResp = await fetch(`${ML_API_BASE}/sites/MLB/search?q=teste&limit=1`);
+      const pubBody = await pubResp.json().catch(() => ({}));
+      diagnostico.ml_public_api = {
+        status_code: pubResp.status,
+        ok: pubResp.ok,
+        resultado: pubResp.ok
+          ? `✅ API pública OK (${pubBody.results?.length || 0} resultados)`
+          : `❌ ${pubResp.status}: ${JSON.stringify(pubBody).substring(0, 200)}`,
+      };
+    } catch (e: any) {
+      diagnostico.ml_public_api = { error: e.message };
+    }
+
     if (!user_id) {
-      diagnostico.error = 'user_id não fornecido no body';
+      diagnostico.error = 'user_id não fornecido';
       return NextResponse.json(diagnostico, { status: 400 });
     }
 
-    // 2. Verificar banco de dados
+    // 5. Banco de dados
     const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 
     const { data: config, error: dbError } = await supabase
@@ -50,97 +98,59 @@ export async function POST(request: NextRequest) {
 
     if (dbError) {
       diagnostico.db = {
-        status: '❌ ERRO ao ler configuracoes',
+        status: '❌ ERRO',
         error: dbError.message,
         code: dbError.code,
-        details: dbError.details,
-        hint: dbError.hint,
       };
       return NextResponse.json(diagnostico);
     }
 
     if (!config) {
-      diagnostico.db = { status: '❌ Nenhuma configuração encontrada para este user_id' };
+      diagnostico.db = { status: '❌ Nenhuma configuração encontrada' };
       return NextResponse.json(diagnostico);
     }
 
     diagnostico.db = {
-      status: '✅ Configuração encontrada',
+      status: '✅ Config encontrada',
       user_id: config.user_id,
       ml_user_id: config.ml_user_id || '❌ NULL',
       ml_access_token: config.ml_access_token
-        ? `✅ presente (${config.ml_access_token.substring(0, 10)}...${config.ml_access_token.substring(config.ml_access_token.length - 5)})`
+        ? `✅ (${config.ml_access_token.substring(0, 15)}...)`
         : '❌ NULL',
       ml_refresh_token: config.ml_refresh_token
-        ? `✅ presente (${config.ml_refresh_token.substring(0, 10)}...)`
+        ? `✅ (${config.ml_refresh_token.substring(0, 15)}...)`
         : '❌ NULL',
       ml_token_expires_at: config.ml_token_expires_at || '❌ NULL',
-      token_expires_at_parsed: config.ml_token_expires_at
-        ? new Date(config.ml_token_expires_at).toISOString()
-        : null,
-      token_expired: config.ml_token_expires_at
-        ? new Date(config.ml_token_expires_at).getTime() < Date.now()
-          ? '⚠️ SIM - token expirado'
-          : `✅ NÃO - expira em ${Math.round((new Date(config.ml_token_expires_at).getTime() - Date.now()) / 60000)} minutos`
-        : '⚠️ sem data de expiração',
+      token_status: config.ml_token_expires_at
+        ? new Date(config.ml_token_expires_at).getTime() > Date.now()
+          ? `✅ Válido por ${Math.round((new Date(config.ml_token_expires_at).getTime() - Date.now()) / 60000)} min`
+          : '⚠️ EXPIRADO'
+        : '⚠️ Sem data',
     };
 
-    // 3. Testar access_token contra a API do ML
+    // 6. Se tiver access_token, testar na API do ML
     if (config.ml_access_token) {
       try {
-        const testResponse = await fetch(`${ML_API_BASE}/users/me`, {
+        const testResp = await fetch(`${ML_API_BASE}/users/me`, {
           headers: { Authorization: `Bearer ${config.ml_access_token}` },
         });
-
-        const testBody = await testResponse.json().catch(() => ({}));
-
-        diagnostico.ml_api_test = {
-          endpoint: '/users/me',
-          status_code: testResponse.status,
-          ok: testResponse.ok,
-          response: testResponse.ok
-            ? { id: testBody.id, nickname: testBody.nickname }
-            : testBody,
-          resultado: testResponse.ok
-            ? `✅ Token VÁLIDO - usuário: ${testBody.nickname} (${testBody.id})`
-            : `❌ Token INVÁLIDO - ${testResponse.status}: ${JSON.stringify(testBody)}`,
+        const testBody = await testResp.json().catch(() => ({}));
+        diagnostico.ml_token_test = {
+          status_code: testResp.status,
+          resultado: testResp.ok
+            ? `✅ Token válido - ${testBody.nickname} (${testBody.id})`
+            : `❌ ${testResp.status}: ${JSON.stringify(testBody).substring(0, 200)}`,
         };
-      } catch (fetchError: any) {
-        diagnostico.ml_api_test = {
-          status: '❌ ERRO ao conectar com ML API',
-          error: fetchError.message,
-        };
+      } catch (e: any) {
+        diagnostico.ml_token_test = { error: e.message };
       }
-    } else {
-      diagnostico.ml_api_test = { status: '⏭️ Pulado - sem access_token' };
     }
 
-    // 4. Testar search público (sem auth)
-    try {
-      const publicSearch = await fetch(
-        `${ML_API_BASE}/sites/MLB/search?q=teste&limit=1`
-      );
-      diagnostico.ml_public_api = {
-        endpoint: '/sites/MLB/search?q=teste&limit=1',
-        status_code: publicSearch.status,
-        ok: publicSearch.ok,
-        resultado: publicSearch.ok
-          ? '✅ API pública do ML acessível'
-          : `❌ API pública falhou: ${publicSearch.status}`,
-      };
-    } catch (e: any) {
-      diagnostico.ml_public_api = {
-        status: '❌ ERRO ao acessar ML API pública',
-        error: e.message,
-      };
-    }
-
-    // 5. Se token expirado, testar refresh
-    const tokenExpired =
-      !config.ml_token_expires_at ||
+    // 7. Se tiver refresh_token e token expirado, testar refresh
+    const needsRefresh = !config.ml_token_expires_at ||
       new Date(config.ml_token_expires_at).getTime() < Date.now();
 
-    if (tokenExpired && config.ml_refresh_token && ML_SECRET_KEY) {
+    if (needsRefresh && config.ml_refresh_token) {
       try {
         const refreshResp = await fetch(`${ML_API_BASE}/oauth/token`, {
           method: 'POST',
@@ -160,19 +170,14 @@ export async function POST(request: NextRequest) {
 
         diagnostico.refresh_test = {
           status_code: refreshResp.status,
-          ok: refreshResp.ok,
           resultado: refreshResp.ok
-            ? `✅ Refresh FUNCIONOU - novo token obtido`
-            : `❌ Refresh FALHOU - ${refreshResp.status}: ${JSON.stringify(refreshBody)}`,
-          response_keys: refreshResp.ok
-            ? Object.keys(refreshBody)
-            : undefined,
-          error_body: refreshResp.ok ? undefined : refreshBody,
+            ? '✅ Refresh funcionou!'
+            : `❌ ${refreshResp.status}: ${JSON.stringify(refreshBody).substring(0, 200)}`,
         };
 
-        // Se refresh funcionou, salvar os novos tokens
+        // Se funcionou, salvar automaticamente
         if (refreshResp.ok && refreshBody.access_token) {
-          const { error: updateError } = await supabase
+          const { error: saveError } = await supabase
             .from('configuracoes')
             .update({
               ml_access_token: refreshBody.access_token,
@@ -183,27 +188,59 @@ export async function POST(request: NextRequest) {
             })
             .eq('user_id', user_id);
 
-          diagnostico.refresh_test.saved = updateError
-            ? `❌ Erro ao salvar: ${updateError.message}`
-            : '✅ Novos tokens salvos no banco';
+          diagnostico.refresh_test.saved = saveError
+            ? `❌ Erro ao salvar: ${saveError.message}`
+            : '✅ Tokens salvos!';
         }
-      } catch (refreshError: any) {
-        diagnostico.refresh_test = {
-          status: '❌ ERRO ao tentar refresh',
-          error: refreshError.message,
+      } catch (e: any) {
+        diagnostico.refresh_test = { error: e.message };
+      }
+    } else if (!needsRefresh) {
+      diagnostico.refresh_test = { status: '⏭️ Token não expirou' };
+    } else {
+      diagnostico.refresh_test = { status: '❌ Sem refresh_token' };
+    }
+
+    // 8. TESTE de escrita no banco (write test)
+    diagnostico.db_write_test = {};
+    try {
+      const testValue = `debug_test_${Date.now()}`;
+      const { error: writeError } = await supabase
+        .from('configuracoes')
+        .update({ ml_user_id: config.ml_user_id || testValue })
+        .eq('user_id', user_id);
+
+      if (writeError) {
+        diagnostico.db_write_test = {
+          resultado: `❌ Service key NÃO CONSEGUE escrever: ${writeError.message} (code: ${writeError.code})`,
+        };
+      } else {
+        // Verificar se escreveu
+        const { data: verify } = await supabase
+          .from('configuracoes')
+          .select('ml_user_id')
+          .eq('user_id', user_id)
+          .single();
+        diagnostico.db_write_test = {
+          resultado: verify ? '✅ Service key consegue LER e ESCREVER no banco' : '❌ Verificação falhou',
         };
       }
-    } else if (!tokenExpired) {
-      diagnostico.refresh_test = { status: '⏭️ Pulado - token ainda não expirou' };
-    } else if (!config.ml_refresh_token) {
-      diagnostico.refresh_test = { status: '❌ Sem refresh_token para testar' };
-    } else if (!ML_SECRET_KEY) {
-      diagnostico.refresh_test = { status: '❌ ML_SECRET_KEY ausente - refresh impossível' };
+    } catch (e: any) {
+      diagnostico.db_write_test = { error: e.message };
     }
+
+    // 9. Checklist de ações
+    const tokensMissing = !config.ml_access_token;
+    diagnostico.checklist = {
+      '1_credenciais_ml': diagnostico.ml_credentials_test.ok ? '✅' : '❌ Verifique ML_APP_ID e ML_SECRET_KEY no Vercel',
+      '2_tokens_no_banco': tokensMissing ? '❌ Reconecte via Ajustes (tokens ausentes)' : '✅',
+      '3_redirect_uri': `Verifique no ML Developer Console que a Redirect URI é: ${callbackUrl}`,
+      '4_db_escrita': diagnostico.db_write_test.resultado?.startsWith('✅') ? '✅' : '❌ Problema com service role key',
+    };
 
     return NextResponse.json(diagnostico);
   } catch (err: any) {
-    diagnostico.fatal_error = { message: err.message, stack: err.stack };
+    diagnostico.fatal_error = { message: err.message, stack: err.stack?.substring(0, 500) };
     return NextResponse.json(diagnostico, { status: 500 });
   }
 }
