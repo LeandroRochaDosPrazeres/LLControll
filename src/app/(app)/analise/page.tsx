@@ -129,11 +129,12 @@ export default function AnalisePage() {
     if (!query.trim() && !itemId) return;
 
     setIsSearching(true);
+    let currentUserId: string | undefined;
     try {
       // Buscar userId diretamente para garantir que está disponível
       const supabase = getSupabaseClient();
       const { data: { user } } = await supabase.auth.getUser();
-      const currentUserId = user?.id;
+      currentUserId = user?.id;
       
       if (!currentUserId) {
         throw new Error('Usuário não autenticado');
@@ -163,6 +164,21 @@ export default function AnalisePage() {
       }
     } catch (error: any) {
       console.error('Erro na busca:', error);
+
+      // Executar diagnóstico automático para debug
+      if (currentUserId) {
+        try {
+          const debugResp = await fetch('/api/mercadolivre/debug', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ user_id: currentUserId }),
+          });
+          const debugData = await debugResp.json();
+          console.error('=== DIAGNÓSTICO ML ===', JSON.stringify(debugData, null, 2));
+        } catch (debugErr) {
+          console.error('Erro no diagnóstico:', debugErr);
+        }
+      }
 
       // Se for erro de autenticação, mostrar mensagem clara
       const isAuthError =
