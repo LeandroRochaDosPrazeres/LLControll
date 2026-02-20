@@ -23,6 +23,7 @@ import {
 import { getSupabaseClient } from '@/lib/supabase/client';
 import { Produto, ProdutoInsert, TaxaTipo } from '@/types/database';
 import { hapticFeedback } from '@/lib/utils/helpers';
+import { onStockSynced } from '@/lib/utils/events';
 import ProdutoForm from './components/ProdutoForm';
 import VendaRapidaModal from './components/VendaRapidaModal';
 
@@ -41,6 +42,25 @@ export default function EstoquePage() {
 
   useEffect(() => {
     carregarProdutos();
+  }, []);
+
+  // Recarregar produtos quando a sincronização ML acontecer
+  useEffect(() => {
+    const cleanup = onStockSynced(() => {
+      carregarProdutos();
+    });
+    return cleanup;
+  }, []);
+
+  // Recarregar quando a página voltar ao foco (ex: trocar de aba no PWA)
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        carregarProdutos();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    return () => document.removeEventListener('visibilitychange', handleVisibility);
   }, []);
 
   useEffect(() => {

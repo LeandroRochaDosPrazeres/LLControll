@@ -28,6 +28,7 @@ import { Card, Button, useToast } from '@/components/ui';
 import { formatarMoeda } from '@/lib/utils/calculos';
 import { getSupabaseClient } from '@/lib/supabase/client';
 import { cn } from '@/lib/utils/helpers';
+import { emitStockSynced } from '@/lib/utils/events';
 
 interface MLAnuncio {
   id: string;
@@ -258,19 +259,33 @@ export default function MercadoLivrePage() {
 
       if (response.ok) {
         const data = await response.json();
+        const d = data.details || {};
+        const parts: string[] = [];
+        if (d.created > 0) parts.push(`${d.created} criado(s)`);
+        if (d.updated > 0) parts.push(`${d.updated} atualizado(s)`);
+        if (d.deactivated > 0) parts.push(`${d.deactivated} desativado(s)`);
+
         addToast({
           type: 'success',
           title: 'Estoque sincronizado!',
-          description: `${data.synced} produtos atualizados`,
+          description: parts.length > 0
+            ? parts.join(', ')
+            : 'Tudo já estava atualizado',
         });
+
+        // Notificar outras abas/páginas que o estoque mudou
+        emitStockSynced();
+
         await loadAnuncios();
       } else {
-        throw new Error('Erro ao sincronizar');
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || 'Erro ao sincronizar');
       }
-    } catch (error) {
+    } catch (error: any) {
       addToast({
         type: 'error',
         title: 'Erro ao sincronizar estoque',
+        description: error.message || 'Tente novamente',
       });
     } finally {
       setIsRefreshing(false);
