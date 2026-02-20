@@ -163,7 +163,23 @@ export default function AnalisePage() {
       }
     } catch (error: any) {
       console.error('Erro na busca:', error);
-      addToast({ type: 'error', title: error.message || 'Erro ao buscar no Mercado Livre' });
+
+      // Se for erro de autenticação, mostrar mensagem clara
+      const isAuthError =
+        error.message?.includes('Reconecte') ||
+        error.message?.includes('conectada') ||
+        error.message?.includes('expirada') ||
+        error.message?.includes('Ajustes');
+
+      addToast({
+        type: isAuthError ? 'warning' : 'error',
+        title: isAuthError
+          ? 'Sessão do Mercado Livre expirada'
+          : 'Erro ao buscar no Mercado Livre',
+        description: isAuthError
+          ? 'Vá em Ajustes para reconectar sua conta.'
+          : error.message,
+      });
     } finally {
       setIsSearching(false);
       setProdutoAnalisando(null);

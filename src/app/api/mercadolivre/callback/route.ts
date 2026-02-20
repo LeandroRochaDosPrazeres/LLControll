@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getMLUser } from '@/lib/mercadolivre/client';
 import { createClient } from '@supabase/supabase-js';
 
-const ML_APP_ID = process.env.ML_APP_ID || '5368303012953288';
-const ML_SECRET_KEY = process.env.ML_SECRET_KEY || 'wdSjpo7w61ASY7OztyOO8PM8fFYbAtPb';
+const ML_APP_ID = process.env.ML_APP_ID || process.env.NEXT_PUBLIC_ML_APP_ID || '5368303012953288';
+const ML_SECRET_KEY = process.env.ML_SECRET_KEY || '';
 const BASE_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://ll-controll.vercel.app';
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://vbhhjukhtrylghclvotv.supabase.co';
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 export async function GET(request: NextRequest) {
@@ -87,8 +87,7 @@ export async function GET(request: NextRequest) {
             ml_user_id: mlUser.id.toString(),
             ml_access_token: tokenData.access_token,
             ml_refresh_token: tokenData.refresh_token,
-            ml_token_expires: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
-            ml_nickname: mlUser.nickname,
+            ml_token_expires_at: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
           })
           .eq('user_id', userId);
       } else {
@@ -100,8 +99,7 @@ export async function GET(request: NextRequest) {
             ml_user_id: mlUser.id.toString(),
             ml_access_token: tokenData.access_token,
             ml_refresh_token: tokenData.refresh_token,
-            ml_token_expires: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
-            ml_nickname: mlUser.nickname,
+            ml_token_expires_at: new Date(Date.now() + tokenData.expires_in * 1000).toISOString(),
           });
       }
     }

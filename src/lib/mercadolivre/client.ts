@@ -89,6 +89,9 @@ export async function exchangeCodeForToken(code: string): Promise<MLToken> {
 
 // Renovar token
 export async function refreshToken(refresh_token: string): Promise<MLToken> {
+  const clientId = process.env.ML_APP_ID || process.env.NEXT_PUBLIC_ML_APP_ID || '5368303012953288';
+  const clientSecret = process.env.ML_SECRET_KEY || '';
+
   const response = await fetch(`${ML_API_BASE}/oauth/token`, {
     method: 'POST',
     headers: {
@@ -97,14 +100,16 @@ export async function refreshToken(refresh_token: string): Promise<MLToken> {
     },
     body: new URLSearchParams({
       grant_type: 'refresh_token',
-      client_id: process.env.ML_APP_ID!,
-      client_secret: process.env.ML_SECRET_KEY!,
+      client_id: clientId,
+      client_secret: clientSecret,
       refresh_token: refresh_token,
     }),
   });
 
   if (!response.ok) {
-    throw new Error('Erro ao renovar token');
+    const errBody = await response.json().catch(() => ({}));
+    console.error('[ML Client] Refresh falhou:', response.status, errBody);
+    throw new Error(errBody.message || 'Erro ao renovar token');
   }
 
   return response.json();

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@supabase/supabase-js';
-import { refreshToken } from '@/lib/mercadolivre/client';
+import { getValidToken, callMLApi, MLAuthError } from '@/lib/mercadolivre/token';
 
 const ML_API_BASE = 'https://api.mercadolibre.com';
 
@@ -53,13 +52,10 @@ function calcularPrecoSugerido(precoMedio: number, precoMediano: number, precoMi
   return Math.max(sugerido, pisoMinimo);
 }
 
-// API POST - mesma estrutura das outras APIs que funcionam
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { user_id, query, item_id, limit = 50 } = body;
-
-    console.log('Search API POST - user_id:', user_id, 'query:', query);
 
     if (!query && !item_id) {
       return NextResponse.json(
@@ -75,67 +71,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Criar cliente Supabase com service role (mesma abordagem da API items que funciona)
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
-
-    // Buscar configurações do usuário (mesma query da API items)
-    const { data: config, error } = await supabase
-      .from('configuracoes')
-      .select('ml_user_id, ml_access_token, ml_refresh_token, ml_token_expires')
-      .eq('user_id', user_id)
-      .single();
-
-    console.log('Config query result - data:', !!config, 'error:', error?.message);
-    console.log('ml_access_token presente:', !!config?.ml_access_token);
-
-    if (!config?.ml_access_token) {
-      return NextResponse.json(
-        { error: 'Conecte sua conta do Mercado Livre na aba ML para usar esta funcionalidade' },
-        { status: 401 }
-      );
-    }
-
-    let accessToken = config.ml_access_token;
-
-    // Verificar se token expirou
-    if (config.ml_token_expires && new Date(config.ml_token_expires) < new Date()) {
-      console.log('Token expirado, renovando...');
-      try {
-        const newToken = await refreshToken(config.ml_refresh_token);
-        accessToken = newToken.access_token;
-
-        await supabase
-          .from('configuracoes')
-          .update({
-            ml_access_token: newToken.access_token,
-            ml_refresh_token: newToken.refresh_token,
-            ml_token_expires: new Date(Date.now() + newToken.expires_in * 1000).toISOString(),
-          })
-          .eq('user_id', user_id);
-        
-        console.log('Token renovado com sucesso');
-      } catch (err) {
-        console.error('Erro ao renovar token:', err);
-        return NextResponse.json(
-          { error: 'Token expirado, reconecte ao ML' },
-          { status: 401 }
-        );
-      }
-    }
+    // Obter token válido (silent refresh automático)
+    const credentials = await getValidToken(user_id);
 
     let searchQuery = query;
 
     // Se temos um item_id, buscar o título do item para usar como query
     if (item_id && !query) {
-      const itemResponse = await fetch(`${ML_API_BASE}/items/${item_id}`, {
-        headers: {
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-        },
-      });
+      const itemResponse = await callMLApi(
+        `${ML_API_BASE}/items/${item_id}`,
+        credentials
+      );
       
       if (itemResponse.ok) {
         const itemData = await itemResponse.json();
@@ -151,35 +97,16 @@ export async function POST(request: NextRequest) {
     // Buscar produtos no Mercado Livre
     const searchUrl = `${ML_API_BASE}/sites/MLB/search?q=${encodeURIComponent(searchQuery)}&limit=${limit}&sort=relevance`;
     
-    console.log('Buscando no ML:', searchUrl);
-    
-    const searchResponse = await fetch(searchUrl, {
-      headers: {
-        'Accept': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-      },
-    });
-
-    console.log('ML Response status:', searchResponse.status);
+    const searchResponse = await callMLApi(searchUrl, credentials);
 
     if (!searchResponse.ok) {
       const errorText = await searchResponse.text();
       console.error('ML API Error:', searchResponse.status, errorText);
-      
-      if (searchResponse.status === 403) {
-        return NextResponse.json(
-          { error: 'Erro de autenticação com o Mercado Livre. Tente reconectar sua conta.' },
-          { status: 403 }
-        );
-      }
-      
       throw new Error(`Erro na API do Mercado Livre: ${searchResponse.status}`);
     }
 
     const searchData = await searchResponse.json();
     const results: MLSearchResult[] = searchData.results || [];
-
-    console.log('Resultados encontrados:', results.length);
 
     if (results.length === 0) {
       return NextResponse.json({
@@ -199,12 +126,10 @@ export async function POST(request: NextRequest) {
     // Filtrar itens do próprio vendedor se item_id foi fornecido
     let itensAnalise = results;
     if (item_id) {
-      const itemResponse = await fetch(`${ML_API_BASE}/items/${item_id}`, {
-        headers: {
-          'Accept': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-        },
-      });
+      const itemResponse = await callMLApi(
+        `${ML_API_BASE}/items/${item_id}`,
+        credentials
+      );
       
       if (itemResponse.ok) {
         const itemData = await itemResponse.json();
@@ -247,6 +172,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(resultado);
   } catch (err: any) {
     console.error('Erro na busca ML:', err);
+
+    if (err instanceof MLAuthError) {
+      return NextResponse.json(
+        { error: err.message },
+        { status: err.statusCode }
+      );
+    }
+
     return NextResponse.json(
       { error: err.message || 'Erro interno' },
       { status: 500 }
